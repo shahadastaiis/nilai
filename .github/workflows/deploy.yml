@@ -37,128 +37,75 @@ jobs:
           fi
           ls -la dist/
 
-      - name: 6. Upload Otomatis ke cPanel via FTP
+      - name: 6. Upload Otomatis ke cPanel (Bypass Firewall Passive Port via HTTPS)
         env:
           FTP_HOST: ${{ secrets.FTP_SERVER }}
           FTP_USER: ${{ secrets.FTP_USERNAME }}
           FTP_PASS: ${{ secrets.FTP_PASSWORD }}
+          SUBDOMAIN_URL: "https://nilai.stai-imamsyafii.ac.id/deploy.php"
         run: |
-          sudo apt-get update -y && sudo apt-get install -y lftp dnsutils netcat-openbsd
           HOST_CLEAN=$(echo "$FTP_HOST" | sed -e 's|^ftp://||' -e 's|^ftps://||' -e 's|^http://||' -e 's|^https://||' -e 's|/.*$||' -e 's|:.*$||' | tr -d '[:space:]')
           USER_CLEAN=$(echo "$FTP_USER" | tr -d '[:space:]')
 
           echo "=========================================="
-          echo "Memeriksa jalur koneksi ke FTP Server..."
-          RESOLVED_IP=$(dig +short "$HOST_CLEAN" | tail -n1)
-          if [ -z "$RESOLVED_IP" ]; then
-            RESOLVED_IP="$HOST_CLEAN"
-          fi
-          echo "Target IP Server: $RESOLVED_IP"
+          echo "Menyiapkan paket bundle (manifest.json) dari folder dist/..."
+          node -e '
+            const fs = require("fs");
+            const path = require("path");
+            const files = {};
+            function walk(dir, base = "") {
+              for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+                const full = path.join(dir, entry.name);
+                const rel = base ? base + "/" + entry.name : entry.name;
+                if (entry.isDirectory()) {
+                  walk(full, rel);
+                } else if (rel !== "deploy.php") {
+                  files[rel] = fs.readFileSync(full).toString("base64");
+                }
+              }
+            }
+            walk("dist");
+            fs.writeFileSync("manifest.json", JSON.stringify({ files }));
+            console.log("Total file siap kirim:", Object.keys(files).length);
+          '
 
-          if echo "$RESOLVED_IP" | grep -Eq '^(104\.21\.|172\.67\.|104\.16\.|104\.17\.|104\.18\.|104\.19\.|104\.20\.)'; then
-            echo "❌ ERROR: Secret FTP_SERVER masih mengarah ke IP Cloudflare ($RESOLVED_IP)!"
-            echo "Cloudflare memblokir jalur FTP (Port 21)."
-            echo "SOLUSI: Buka cPanel -> lihat panel kanan 'General Information' -> salin angka 'Shared IP Address', lalu masukkan angka IP tersebut ke GitHub Secret FTP_SERVER."
-            exit 1
-          fi
-
-          if ! nc -zv -w 8 "$HOST_CLEAN" 21; then
-            echo "❌ ERROR: Port 21 pada server ($RESOLVED_IP) tidak merespons / tertutup!"
-            echo "Pastikan FTP_SERVER di GitHub Secrets diisi dengan 'Shared IP Address' asli dari cPanel."
-            exit 1
-          fi
-          echo "✅ Port 21 terbuka! Memulai proses login & upload..."
           echo "=========================================="
+          echo "Mengirim pembaruan ke https://nilai.stai-imamsyafii.ac.id/deploy.php (Port 443 HTTPS)..."
 
-          COMMON_MIRROR="mirror --reverse --delete --verbose --exclude-glob .well-known/ --exclude-glob cgi-bin/ --exclude-glob .ftpquota --exclude-glob .htaccess.bak* ./dist/ ./"
-
-          echo "--> [Mode 1/4] Mencoba FTPS Penuh (TLS Data + PASV IPv4 tanpa EPSV)..."
-          if lftp -c "
-            debug 5;
-            set dns:order \"inet\";
-            set ssl:verify-certificate no;
-            set ftp:ssl-allow yes;
-            set ftp:ssl-protect-data yes;
-            set ftp:ssl-protect-list yes;
-            set ftp:prefer-epsv no;
-            set ftp:fix-pasv-address yes;
-            set ftp:passive-mode on;
-            set net:timeout 12;
-            set net:max-retries 1;
-            set net:reconnect-interval-base 2;
-            open -u \"$USER_CLEAN\",\"$FTP_PASS\" -p 21 \"$HOST_CLEAN\";
-            $COMMON_MIRROR;
-            bye
-          "; then
-            echo "✅ Upload berhasil menggunakan Mode 1 (FTPS Penuh)!"
-            exit 0
+          # Coba kirim langsung ke IP Server Asli (Port 443) maupun via Domain
+          RESPONSE=""
+          if [[ "$HOST_CLEAN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            RESPONSE=$(curl -sS -k --connect-timeout 15 --max-time 60 \
+              --resolve "nilai.stai-imamsyafii.ac.id:443:$HOST_CLEAN" \
+              -F "user=$USER_CLEAN" \
+              -F "pass=$FTP_PASS" \
+              -F "manifest=@manifest.json" \
+              "$SUBDOMAIN_URL" || true)
           fi
 
-          echo "--> [Mode 2/4] Mencoba Plain FTP (Tanpa TLS + PASV IPv4 tanpa EPSV)..."
-          if lftp -c "
-            debug 5;
-            set dns:order \"inet\";
-            set ftp:ssl-allow no;
-            set ftp:prefer-epsv no;
-            set ftp:fix-pasv-address yes;
-            set ftp:passive-mode on;
-            set net:timeout 12;
-            set net:max-retries 1;
-            set net:reconnect-interval-base 2;
-            open -u \"$USER_CLEAN\",\"$FTP_PASS\" -p 21 \"$HOST_CLEAN\";
-            $COMMON_MIRROR;
-            bye
-          "; then
-            echo "✅ Upload berhasil menggunakan Mode 2 (Plain FTP)!"
-            exit 0
+          if [[ "$RESPONSE" != *"DEPLOY_SUCCESS_OK"* ]]; then
+            RESPONSE=$(curl -sS -k -L --connect-timeout 15 --max-time 60 \
+              -F "user=$USER_CLEAN" \
+              -F "pass=$FTP_PASS" \
+              -F "manifest=@manifest.json" \
+              "$SUBDOMAIN_URL" || true)
           fi
 
-          echo "--> [Mode 3/4] Mencoba Upload Per-File via cURL (Bypass LIST directory)..."
-          CURL_SUCCESS=true
-          cd dist
-          for FILE in $(find . -type f | sed 's|^\./||'); do
-            echo "Mengunggah file: $FILE"
-            if ! curl -sS --connect-timeout 10 --max-time 30 \
-              --disable-epsv --ftp-skip-pasv-ip --ftp-create-dirs \
-              -k --ssl-reqd \
-              --user "$USER_CLEAN:$FTP_PASS" \
-              -T "$FILE" "ftp://$HOST_CLEAN:21/$FILE"; then
-              if ! curl -sS --connect-timeout 10 --max-time 30 \
-                --disable-epsv --ftp-skip-pasv-ip --ftp-create-dirs \
-                --user "$USER_CLEAN:$FTP_PASS" \
-                -T "$FILE" "ftp://$HOST_CLEAN:21/$FILE"; then
-                CURL_SUCCESS=false
-                break
-              fi
-            fi
-          done
-          cd ..
-          if [ "$CURL_SUCCESS" = true ]; then
-            echo "✅ Upload berhasil menggunakan Mode 3 (cURL Per-File)!"
-            exit 0
-          fi
+          echo "Respons Server: $RESPONSE"
 
-          echo "--> [Mode 4/4] Mencoba FTP Active Mode (Tanpa Passive Port)..."
-          if lftp -c "
-            debug 5;
-            set dns:order \"inet\";
-            set ssl:verify-certificate no;
-            set ftp:ssl-allow yes;
-            set ftp:ssl-protect-data yes;
-            set ftp:ssl-protect-list yes;
-            set ftp:passive-mode off;
-            set net:timeout 12;
-            set net:max-retries 1;
-            open -u \"$USER_CLEAN\",\"$FTP_PASS\" -p 21 \"$HOST_CLEAN\";
-            $COMMON_MIRROR;
-            bye
-          "; then
-            echo "✅ Upload berhasil menggunakan Mode 4 (FTP Active Mode)!"
+          if [[ "$RESPONSE" == *"DEPLOY_SUCCESS_OK"* ]]; then
+            echo "=========================================="
+            echo "✅ DEPLOY OTOMATIS BERHASIL!"
+            echo "Website SIAKAD sudah aktif di: https://nilai.stai-imamsyafii.ac.id"
+            echo "=========================================="
             exit 0
           fi
 
           echo "=========================================="
-          echo "❌ Semua mode koneksi data FTP mengalami Timeout setelah Login (230 User logged in)."
-          echo "Penyebab: Firewall server hosting memblokir rentang Passive Port pada ProFTPD."
+          echo "⚠️ File jembatan 'deploy.php' belum ditemukan di folder nilai.stai-imamsyafii.ac.id"
+          echo "Karena Firewall server hosting (103.157.146.130) memblokir Passive Port FTP (49152-65535),"
+          echo "silakan buat 1 file bernama 'deploy.php' di cPanel -> File Manager -> folder nilai.stai-imamsyafii.ac.id"
+          echo "dan tempel isi dari file public/deploy.php (hanya perlu dilakukan 1 kali saja)."
           echo "=========================================="
           exit 1
+
