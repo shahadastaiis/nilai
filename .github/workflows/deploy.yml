@@ -43,17 +43,42 @@ jobs:
           FTP_USER: ${{ secrets.FTP_USERNAME }}
           FTP_PASS: ${{ secrets.FTP_PASSWORD }}
         run: |
-          sudo apt-get update -y && sudo apt-get install -y lftp
-          HOST_CLEAN=$(echo "$FTP_HOST" | sed -e 's|^ftp://||' -e 's|^ftps://||' -e 's|/.*$||' | tr -d '[:space:]')
+          sudo apt-get update -y && sudo apt-get install -y lftp dnsutils netcat-openbsd
+          HOST_CLEAN=$(echo "$FTP_HOST" | sed -e 's|^ftp://||' -e 's|^ftps://||' -e 's|^http://||' -e 's|^https://||' -e 's|/.*$||' -e 's|:.*$||' | tr -d '[:space:]')
           USER_CLEAN=$(echo "$FTP_USER" | tr -d '[:space:]')
-          echo "Menghubungkan ke FTP Server: $HOST_CLEAN ..."
+
+          echo "=========================================="
+          echo "Memeriksa jalur koneksi ke FTP Server..."
+          RESOLVED_IP=$(dig +short "$HOST_CLEAN" | tail -n1)
+          if [ -z "$RESOLVED_IP" ]; then
+            RESOLVED_IP="$HOST_CLEAN"
+          fi
+          echo "Target IP Server: $RESOLVED_IP"
+
+          if echo "$RESOLVED_IP" | grep -Eq '^(104\.21\.|172\.67\.|104\.16\.|104\.17\.|104\.18\.|104\.19\.|104\.20\.)'; then
+            echo "❌ ERROR: Secret FTP_SERVER masih mengarah ke IP Cloudflare ($RESOLVED_IP)!"
+            echo "Cloudflare memblokir jalur FTP (Port 21)."
+            echo "SOLUSI: Buka cPanel -> lihat panel kanan 'General Information' -> salin angka 'Shared IP Address', lalu masukkan angka IP tersebut ke GitHub Secret FTP_SERVER."
+            exit 1
+          fi
+
+          if ! nc -zv -w 8 "$HOST_CLEAN" 21; then
+            echo "❌ ERROR: Port 21 pada server ($RESOLVED_IP) tidak merespons / tertutup!"
+            echo "Pastikan FTP_SERVER di GitHub Secrets diisi dengan 'Shared IP Address' asli dari cPanel."
+            exit 1
+          fi
+          echo "✅ Port 21 terbuka! Memulai proses login & upload..."
+          echo "=========================================="
+
           lftp -c "
+            debug 3;
             set ssl:verify-certificate no;
             set ftp:ssl-allow yes;
+            set ftp:ssl-protect-data no;
             set ftp:passive-mode on;
-            set net:timeout 25;
-            set net:max-retries 3;
-            set net:reconnect-interval-base 5;
+            set net:timeout 15;
+            set net:max-retries 2;
+            set net:reconnect-interval-base 3;
             open -u \"$USER_CLEAN\",\"$FTP_PASS\" -p 21 \"$HOST_CLEAN\";
             mirror --reverse --delete --verbose \
               --exclude-glob .well-known/ \
@@ -63,4 +88,5 @@ jobs:
               ./dist/ ./;
             bye
           "
+
 
