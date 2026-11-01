@@ -174,44 +174,49 @@ const Layout: React.FC<LayoutProps> = ({
       </aside>
 
       {/* --- MOBILE & TABLET TOP BAR (< lg) --- */}
-      <header className="lg:hidden sticky top-0 left-0 right-0 h-13 bg-white/95 backdrop-blur-md z-40 flex items-center justify-between px-3.5 sm:px-5 border-b border-slate-200/80 shadow-2xs">
+      <header className="lg:hidden sticky top-0 left-0 right-0 h-14 bg-white/95 backdrop-blur-md z-40 flex items-center justify-between px-3.5 sm:px-5 border-b border-slate-200/80 shadow-2xs">
         <div className="flex items-center gap-2.5 min-w-0">
           {navItems.length > 0 && (
             <button
               onClick={() => setMobileMenuOpen(true)}
-              className="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-100 text-slate-700 hover:bg-emerald-50 hover:text-[#064E3B] transition-colors shrink-0"
+              className="w-9 h-9 flex items-center justify-center rounded-xl bg-slate-100 text-slate-700 hover:bg-emerald-50 hover:text-[#064E3B] active:scale-95 transition-all shrink-0"
               aria-label="القائمة"
+              title="القائمة"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M4 6h16M4 12h16M4 18h16" />
               </svg>
             </button>
           )}
-          <div className="w-7 h-7 rounded-lg bg-emerald-50 p-1 border border-emerald-100 shrink-0">
+          <div className="w-8 h-8 rounded-xl bg-emerald-50/80 p-1 border border-emerald-100 shrink-0 flex items-center justify-center">
             <img src={logoUrl} alt="شعار الجامعة" referrerPolicy="no-referrer" className="w-full h-full object-contain" />
           </div>
-          <div className="truncate">
+          <div className="min-w-0">
             <span className="text-[#064E3B] font-extrabold text-xs block leading-tight truncate">جامعة الإمام الشافعي</span>
-            <span className="text-[10px] text-slate-400 font-bold block leading-tight truncate">{user.name} • {getRoleLabel()}</span>
+            <div className="flex items-center gap-1 text-[10px] text-slate-500 font-bold leading-tight truncate mt-0.5">
+              <span className="truncate">{user.name}</span>
+              <span aria-hidden="true">·</span>
+              <span className="text-emerald-700 shrink-0">{getRoleLabel()}</span>
+            </div>
           </div>
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">
           <button
             onClick={onChangePassword}
-            className="h-8 px-2.5 flex items-center justify-center gap-1 rounded-lg bg-slate-100 text-slate-600 hover:text-[#064E3B] transition-colors text-[11px] font-bold"
-            title="كلمة المرور"
+            className="w-9 h-9 flex items-center justify-center rounded-xl bg-slate-100 text-slate-600 hover:bg-emerald-50 hover:text-[#064E3B] active:scale-95 transition-all"
+            title="تغيير كلمة المرور"
+            aria-label="تغيير كلمة المرور"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3.5 h-3.5"><path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" /></svg>
-            <span className="hidden sm:inline">كلمة المرور</span>
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" /></svg>
           </button>
           <button
             onClick={onLogout}
-            className="h-8 px-2.5 flex items-center justify-center gap-1 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 transition-colors text-[11px] font-bold"
-            title="خروج"
+            className="w-9 h-9 flex items-center justify-center rounded-xl bg-red-50 text-red-600 hover:bg-red-100 active:scale-95 transition-all"
+            title="تسجيل الخروج"
+            aria-label="تسجيل الخروج"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3.5 h-3.5"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75" /></svg>
-            <span className="hidden sm:inline">خروج</span>
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75" /></svg>
           </button>
         </div>
       </header>
@@ -236,7 +241,7 @@ const Layout: React.FC<LayoutProps> = ({
               </div>
               <button
                 onClick={() => setMobileMenuOpen(false)}
-                className="w-7 h-7 rounded-lg bg-slate-100 text-slate-500 flex items-center justify-center hover:bg-slate-200"
+                className="w-8 h-8 rounded-xl bg-slate-100 text-slate-500 flex items-center justify-center hover:bg-slate-200"
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
@@ -291,7 +296,7 @@ const Layout: React.FC<LayoutProps> = ({
 
       {/* --- CONTENT AREA --- */}
       <main 
-        className={`flex-1 flex flex-col transition-all duration-200 min-h-[calc(100vh-3.25rem)] lg:min-h-screen pb-20 lg:pb-6
+        className={`flex-1 flex flex-col transition-all duration-200 min-h-[calc(100vh-3.5rem)] lg:min-h-screen pb-24 lg:pb-6
         ${sidebarCollapsed ? 'lg:mr-20' : 'lg:mr-60'}`}
       >
         {topBarContent && (
@@ -306,7 +311,7 @@ const Layout: React.FC<LayoutProps> = ({
           </header>
         )}
         
-        <div className="px-3 sm:px-5 lg:px-7 py-3.5 sm:py-5 flex-1 overflow-x-hidden max-w-[1440px] w-full mx-auto">
+        <div className="px-3 sm:px-5 lg:px-7 py-3 sm:py-5 flex-1 overflow-x-hidden max-w-[1440px] w-full mx-auto">
           {children}
         </div>
       </main>

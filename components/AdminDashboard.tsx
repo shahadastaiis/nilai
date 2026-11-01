@@ -57,9 +57,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, activeMenu, onMen
 
   // --- HEADER SECTION ---
   const HeaderBlock = () => (
-      <div className="bg-white p-3.5 sm:p-5 rounded-2xl border border-slate-200/80 shadow-2xs flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4 sm:mb-5">
-            <div>
-                <h2 className="text-base sm:text-xl md:text-2xl font-extrabold text-slate-900 tracking-tight leading-tight">
+      <div className="bg-white p-3 sm:p-5 rounded-2xl border border-slate-200/80 shadow-2xs flex items-center justify-between gap-2.5 mb-3.5 sm:mb-5">
+            <div className="min-w-0 flex-1">
+                <h2 className="text-sm sm:text-xl md:text-2xl font-extrabold text-slate-900 tracking-tight leading-tight truncate">
                     {activeMenu === 'students' && 'سجل الطلاب'}
                     {activeMenu === 'lecturers' && 'أعضاء هيئة التدريس'}
                     {activeMenu === 'subjects' && 'المقررات الدراسية'}
@@ -69,17 +69,18 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, activeMenu, onMen
                     {activeMenu === 'report' && 'تقارير وكشوف الدرجات'}
                     {activeMenu === 'khs' && 'السجل الأكاديمي التراكمي'}
                 </h2>
-                <p className="text-slate-400 font-bold text-[11px] sm:text-xs mt-0.5">لوحة التحكم الأكاديمية</p>
+                <p className="text-slate-400 font-bold text-[10px] sm:text-xs mt-0.5 truncate">لوحة التحكم الأكاديمية</p>
             </div>
             
-            <div className="flex items-center justify-between sm:justify-end gap-2 w-full sm:w-auto pt-2.5 sm:pt-0 border-t sm:border-t-0 border-slate-100">
+            <div className="flex items-center gap-1.5 shrink-0">
                 {activeMenu !== 'khs' && (
-                    <div className="bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200/80 flex items-center gap-2 flex-1 sm:flex-initial justify-between sm:justify-start">
-                        <span className="text-[11px] font-bold text-slate-400 whitespace-nowrap">العام:</span>
+                    <div className="bg-slate-50 h-9 px-2.5 rounded-xl border border-slate-200/80 flex items-center gap-1.5">
+                        <span className="text-[10px] font-bold text-slate-400 whitespace-nowrap hidden sm:inline">العام:</span>
                         <select 
                             value={selectedYear}
                             onChange={(e) => setSelectedYear(e.target.value)}
                             className="bg-transparent font-extrabold text-[#064E3B] text-xs outline-none cursor-pointer tabular-nums"
+                            aria-label="العام الدراسي"
                         >
                             {years.map(y => <option key={y.id} value={y.id}>{y.name}</option>)}
                         </select>
@@ -89,13 +90,13 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, activeMenu, onMen
                 <button 
                     onClick={handleReload}
                     disabled={reloading}
-                    className="px-3 py-1.5 sm:py-2 rounded-xl bg-white border border-slate-200/80 text-slate-600 hover:text-[#064E3B] hover:border-emerald-300 transition-all disabled:opacity-50 flex items-center gap-1.5 text-xs font-bold whitespace-nowrap shrink-0"
-                    title="تحديث"
+                    className="w-9 h-9 rounded-xl bg-slate-50 border border-slate-200/80 text-slate-600 hover:text-[#064E3B] hover:bg-emerald-50 hover:border-emerald-200 active:scale-95 transition-all disabled:opacity-50 flex items-center justify-center shrink-0 cursor-pointer"
+                    title="تحديث البيانات"
+                    aria-label="تحديث البيانات"
                 >
                     <svg className={`w-4 h-4 ${reloading ? 'animate-spin text-[#064E3B]' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                     </svg>
-                    <span>تحديث</span>
                 </button>
             </div>
       </div>

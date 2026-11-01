@@ -164,6 +164,7 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
   const [saving, setSaving] = useState(false);
   const [reloading, setReloading] = useState(false);
   const [downloadingPdf, setDownloadingPdf] = useState<'SEM1' | 'SEM2' | 'YEARLY' | null>(null);
+  const [showDownloadMenu, setShowDownloadMenu] = useState(false);
 
   const [activeTab, setActiveTab] = useState<TabType>('sem1');
 
@@ -266,6 +267,7 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
   };
 
   const handleDownloadSubjectPdf = async (pdfType: 'SEM1' | 'SEM2' | 'YEARLY') => {
+    setShowDownloadMenu(false);
     if (!selectedSubject || !selectedYear) return;
     if (studentsData.length === 0) {
       showError('لا يوجد طلاب مسجلون في هذا المقرر');
@@ -616,21 +618,22 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
   const isGlobalDirect = currentTabMode === 'DIRECT';
 
   return (
-    <div className="space-y-3.5 sm:space-y-4">
-      {/* Header */}
-      <div className={`bg-white p-3.5 sm:p-5 rounded-2xl border border-slate-200/80 shadow-2xs flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 ${selectedSubject ? 'hidden md:flex' : ''}`}>
-        <div>
-          <h2 className="text-base sm:text-xl font-extrabold text-slate-900">بوابة المحاضر</h2>
-          <p className="text-slate-500 text-xs mt-0.5">رصد الدرجات الفصلية والاختبارات التكميلية</p>
+    <div className="space-y-3 sm:space-y-4">
+      {/* Header: Compact Mobile Single-Row Layout */}
+      <div className={`bg-white p-3 sm:p-4 rounded-2xl border border-slate-200/80 shadow-2xs flex items-center justify-between gap-2.5 ${selectedSubject ? 'hidden md:flex' : ''}`}>
+        <div className="min-w-0 flex-1">
+          <h2 className="text-sm sm:text-lg font-extrabold text-slate-900 truncate">بوابة المحاضر</h2>
+          <p className="text-slate-400 text-[10px] sm:text-xs font-bold mt-0.5 truncate">رصد الدرجات الفصلية والتكميلية</p>
         </div>
         
-        <div className="flex items-center justify-between sm:justify-end gap-2 w-full sm:w-auto pt-2.5 sm:pt-0 border-t sm:border-t-0 border-slate-100">
-          <div className="bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200/80 flex items-center gap-2 flex-1 sm:flex-initial justify-between sm:justify-start">
-            <span className="text-[11px] font-bold text-slate-400">العام:</span>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <div className="bg-slate-50 h-9 px-2.5 rounded-xl border border-slate-200/80 flex items-center gap-1.5">
+            <span className="text-[10px] font-bold text-slate-400 hidden sm:inline">العام:</span>
             <select 
               value={selectedYear}
               onChange={(e) => setSelectedYear(e.target.value)}
               className="bg-transparent text-[#064E3B] font-extrabold text-xs outline-none cursor-pointer tabular-nums"
+              aria-label="العام الدراسي"
             >
               {years.map(y => (
                 <option key={y.id} value={y.id}>{y.name}</option>
@@ -641,13 +644,13 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
           <button 
             onClick={handleReload}
             disabled={reloading}
-            className="bg-white px-3 py-1.5 rounded-xl border border-slate-200/80 text-slate-600 hover:text-[#064E3B] hover:border-emerald-300 transition-all disabled:opacity-50 flex items-center gap-1.5 text-xs font-bold whitespace-nowrap shrink-0"
-            title="تحديث"
+            className="w-9 h-9 rounded-xl bg-slate-50 border border-slate-200/80 text-slate-600 hover:text-[#064E3B] hover:bg-emerald-50 hover:border-emerald-200 active:scale-95 transition-all disabled:opacity-50 flex items-center justify-center shrink-0 cursor-pointer"
+            title="تحديث البيانات"
+            aria-label="تحديث البيانات"
           >
-            <svg className={`w-3.5 h-3.5 ${reloading ? 'animate-spin text-[#064E3B]' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg className={`w-4 h-4 ${reloading ? 'animate-spin text-[#064E3B]' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
             </svg>
-            <span>تحديث</span>
           </button>
         </div>
       </div>
@@ -655,40 +658,40 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
       {/* --- SUBJECT SELECTION GRID --- */}
       {!selectedSubject && (
         <>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3.5">
-            <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-slate-200/80 shadow-2xs">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
+            <div className="bg-white p-3 sm:p-4 rounded-2xl border border-slate-200/80 shadow-2xs">
               <span className="text-[10px] sm:text-[11px] font-bold text-slate-400 block">المقررات المسندة</span>
-              <span className="text-lg sm:text-xl font-extrabold text-slate-900 mt-0.5 block tabular-nums">{subjects.length}</span>
+              <span className="text-base sm:text-xl font-extrabold text-slate-900 mt-0.5 block tabular-nums">{subjects.length}</span>
             </div>
-            <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-slate-200/80 shadow-2xs">
+            <div className="bg-white p-3 sm:p-4 rounded-2xl border border-slate-200/80 shadow-2xs">
               <span className="text-[10px] sm:text-[11px] font-bold text-slate-400 block">المنشورة</span>
-              <span className="text-lg sm:text-xl font-extrabold text-emerald-700 mt-0.5 block tabular-nums">
+              <span className="text-base sm:text-xl font-extrabold text-emerald-700 mt-0.5 block tabular-nums">
                 {subjects.filter(s => s.status === GradeStatus.PUBLISHED).length}
               </span>
             </div>
-            <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-slate-200/80 shadow-2xs">
+            <div className="bg-white p-3 sm:p-4 rounded-2xl border border-slate-200/80 shadow-2xs">
               <span className="text-[10px] sm:text-[11px] font-bold text-slate-400 block">الفصل الأول</span>
-              <span className={`text-[11px] font-extrabold mt-1.5 inline-block px-2 py-0.5 rounded-md ${currentYearConfig?.isSem1Active ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+              <span className={`text-[10px] sm:text-[11px] font-extrabold mt-1 inline-block px-2 py-0.5 rounded-md ${currentYearConfig?.isSem1Active ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
                 {currentYearConfig?.isSem1Active ? 'مفتوح للرصد' : 'مغلق'}
               </span>
             </div>
-            <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-slate-200/80 shadow-2xs">
+            <div className="bg-white p-3 sm:p-4 rounded-2xl border border-slate-200/80 shadow-2xs">
               <span className="text-[10px] sm:text-[11px] font-bold text-slate-400 block">الفصل الثاني</span>
-              <span className={`text-[11px] font-extrabold mt-1.5 inline-block px-2 py-0.5 rounded-md ${currentYearConfig?.isSem2Active ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+              <span className={`text-[10px] sm:text-[11px] font-extrabold mt-1 inline-block px-2 py-0.5 rounded-md ${currentYearConfig?.isSem2Active ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
                 {currentYearConfig?.isSem2Active ? 'مفتوح للرصد' : 'مغلق'}
               </span>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 sm:gap-3">
             {subjects.map(subject => (
               <div
                 key={subject.id}
                 onClick={() => setSelectedSubject(subject)}
-                className="group bg-white rounded-2xl p-4 shadow-2xs hover:shadow-md transition-all duration-200 border border-slate-200/80 hover:border-emerald-500/40 cursor-pointer flex flex-col justify-between"
+                className="group bg-white rounded-2xl p-3.5 sm:p-4 shadow-2xs hover:shadow-md active:scale-[0.99] transition-all duration-200 border border-slate-200/80 hover:border-emerald-500/40 cursor-pointer flex flex-col justify-between"
               >
                 <div>
-                  <div className="flex justify-between items-center mb-2.5">
+                  <div className="flex justify-between items-center mb-2">
                     <span className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold ${subject.status === GradeStatus.DRAFT ? 'bg-slate-100 text-slate-600' : 'bg-emerald-50 text-emerald-700 border border-emerald-200/60'}`}>
                       {subject.status === GradeStatus.DRAFT ? 'قيد الرصد' : 'منشور'}
                     </span>
@@ -697,15 +700,14 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
                   <h3 className="text-sm sm:text-base font-extrabold text-slate-900 group-hover:text-[#064E3B] transition-colors">{subject.subjectName}</h3>
                 </div>
                 
-                <div className="flex items-center justify-between mt-3.5 pt-3 border-t border-slate-100">
+                <div className="flex items-center justify-between mt-3 pt-2.5 border-t border-slate-100">
                   <div className="flex items-center gap-2">
                     <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md text-[11px] font-bold">{subject.className}</span>
                     <span className="text-[11px] text-slate-400 tabular-nums">{subject.sks} ساعات</span>
                   </div>
-                  <span className="text-xs font-bold text-[#064E3B] inline-flex items-center gap-1">
-                    <span>فتح السجل</span>
-                    <svg className="w-3.5 h-3.5 rotate-180" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
-                  </span>
+                  <div className="w-7 h-7 rounded-lg bg-emerald-50 text-[#064E3B] group-hover:bg-[#064E3B] group-hover:text-white transition-colors flex items-center justify-center">
+                    <svg className="w-3.5 h-3.5 rotate-180" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M9 5l7 7-7 7" /></svg>
+                  </div>
                 </div>
               </div>
             ))}
@@ -720,101 +722,157 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
 
       {/* --- GRADING INTERFACE --- */}
       {selectedSubject && (
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 overflow-hidden flex flex-col relative">
+        <div className="bg-white rounded-2xl shadow-2xs border border-slate-200/80 overflow-hidden flex flex-col relative">
           
-          {/* TOP BAR (Non-colliding clean header) */}
-          <div className="bg-white px-3.5 py-3 sm:px-5 border-b border-slate-200/70 flex flex-row justify-between items-center gap-2.5">
-            <div className="flex items-center gap-2.5 min-w-0">
+          {/* TOP BAR (Icon-First Clean Header with Download Popover / Bottom Sheet) */}
+          <div className="bg-white px-3 py-2.5 sm:px-5 sm:py-3 border-b border-slate-200/70 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0 flex-1">
               <button
                 onClick={() => setSelectedSubject(null)}
-                className="w-8 h-8 flex items-center justify-center bg-slate-100 hover:bg-emerald-50 hover:text-[#064E3B] rounded-xl transition-colors shrink-0"
-                title="رجوع"
+                className="w-9 h-9 flex items-center justify-center bg-slate-100 hover:bg-emerald-50 hover:text-[#064E3B] active:scale-95 rounded-xl transition-all shrink-0 cursor-pointer"
+                title="رجوع للمقررات"
+                aria-label="رجوع للمقررات"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.2} stroke="currentColor" className="w-4 h-4 rotate-180"><path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" /></svg>
               </button>
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <h2 className="text-xs sm:text-base font-extrabold text-slate-900 leading-tight truncate">{selectedSubject.subjectName}</h2>
-                <div className="flex items-center gap-1.5 text-[10px] sm:text-[11px] text-slate-500 mt-0.5 flex-wrap">
+                <div className="flex items-center gap-1.5 text-[10px] sm:text-[11px] text-slate-500 mt-0.5 truncate">
                   <span className="font-bold text-slate-700">{selectedSubject.className}</span>
                   <span>•</span>
                   <span className="tabular-nums">{studentsData.length} طالب</span>
                   {selectedSubject.status === GradeStatus.PUBLISHED && (
-                    <span className="bg-emerald-50 text-emerald-700 border border-emerald-200/60 px-1.5 py-0.2 rounded text-[9px] font-bold">منشور</span>
+                    <>
+                      <span>•</span>
+                      <span className="text-emerald-700 font-extrabold">منشور</span>
+                    </>
                   )}
                 </div>
               </div>
             </div>
             
-            <button 
-              onClick={handleReload}
-              disabled={reloading}
-              className="bg-slate-50 px-2.5 py-1.5 rounded-xl border border-slate-200/80 text-slate-600 hover:text-[#064E3B] transition-all disabled:opacity-50 text-xs font-bold flex items-center gap-1.5 shrink-0"
-              title="تحديث"
-            >
-              <svg className={`w-3.5 h-3.5 ${reloading ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-              <span className="hidden sm:inline">تحديث</span>
-            </button>
-          </div>
+            {/* Right Icon Actions: Toggle Mode (if applicable) + Refresh + Download PDF */}
+            <div className="flex items-center gap-1.5 shrink-0">
+              {activeTab !== 'recap' && activeTab !== 'remidi' && !isLocked && (
+                <button 
+                  onClick={handleGlobalToggle}
+                  className="h-9 px-2.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-[#064E3B] border border-emerald-200/80 active:scale-95 transition-all flex items-center gap-1 text-[11px] font-extrabold cursor-pointer"
+                  title={isGlobalDirect ? 'تبديل للنمط التفصيلي (20 + 80)' : 'تبديل للنمط المباشر (0 - 100)'}
+                  aria-label="تبديل نمط الإدخال"
+                >
+                  <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg>
+                  <span className="tabular-nums">{isGlobalDirect ? '20+80' : '100'}</span>
+                </button>
+              )}
 
-          {/* TAB NAVIGATION & PDF DOWNLOAD BAR */}
-          <div className="px-3.5 py-2.5 sm:px-5 bg-slate-50/70 border-b border-slate-200/60 flex flex-col lg:flex-row lg:items-center justify-between gap-2.5">
-            <div className="overflow-x-auto no-scrollbar">
-              <div className="flex bg-slate-200/60 p-1 rounded-xl min-w-[280px] max-w-xl">
-                <TabButton id="sem1" label="الفصل الأول" />
-                <TabButton id="sem2" label="الفصل الثاني" />
-                <TabButton id="recap" label="المحصلة" />
-                <TabButton id="remidi" label="التكميلي" />
+              <button 
+                onClick={handleReload}
+                disabled={reloading}
+                className="w-9 h-9 rounded-xl bg-slate-50 border border-slate-200/80 text-slate-600 hover:text-[#064E3B] hover:bg-emerald-50 active:scale-95 transition-all disabled:opacity-50 flex items-center justify-center shrink-0 cursor-pointer"
+                title="تحديث البيانات"
+                aria-label="تحديث البيانات"
+              >
+                <svg className={`w-4 h-4 ${reloading ? 'animate-spin text-[#064E3B]' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              </button>
+
+              {/* Single Icon-Only Download PDF Trigger */}
+              <div className="relative">
+                <button
+                  onClick={() => setShowDownloadMenu(prev => !prev)}
+                  disabled={downloadingPdf !== null || studentsData.length === 0}
+                  className="w-9 h-9 rounded-xl bg-[#064E3B] text-white hover:bg-emerald-900 active:scale-95 transition-all shadow-2xs disabled:opacity-40 disabled:pointer-events-none flex items-center justify-center cursor-pointer"
+                  title="تحميل كشف درجات المقرر (PDF)"
+                  aria-label="تحميل كشف درجات المقرر (PDF)"
+                >
+                  {downloadingPdf !== null ? (
+                    <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                  ) : (
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                  )}
+                </button>
+
+                {/* Interactive Download Choice Sheet (Bottom Sheet on Mobile, Popover on Desktop) */}
+                {showDownloadMenu && (
+                  <>
+                    <div
+                      className="fixed inset-0 bg-slate-900/40 backdrop-blur-[1px] z-40 sm:bg-transparent sm:backdrop-blur-none"
+                      onClick={() => setShowDownloadMenu(false)}
+                    />
+                    <div className="fixed bottom-0 inset-x-0 z-50 bg-white rounded-t-3xl p-4 pb-7 shadow-2xl border-t border-slate-200 sm:absolute sm:bottom-auto sm:inset-x-auto sm:left-0 sm:top-11 sm:w-64 sm:rounded-2xl sm:p-2 sm:shadow-xl sm:border animate-fade-in">
+                      <div className="w-10 h-1 bg-slate-200 rounded-full mx-auto mb-3 sm:hidden" />
+                      <div className="flex items-center justify-between px-2 pb-2 mb-1.5 border-b border-slate-100">
+                        <span className="text-xs font-extrabold text-slate-800">تحميل كشف المقرر (PDF)</span>
+                        <button
+                          onClick={() => setShowDownloadMenu(false)}
+                          className="w-6 h-6 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 flex items-center justify-center sm:hidden"
+                        >
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                        </button>
+                      </div>
+
+                      <div className="space-y-1">
+                        <button
+                          onClick={() => handleDownloadSubjectPdf('SEM1')}
+                          className="w-full px-3 py-2.5 rounded-xl text-right text-xs font-bold text-slate-700 hover:bg-emerald-50 hover:text-[#064E3B] active:scale-[0.99] transition-all flex items-center justify-between gap-2 cursor-pointer"
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <div className="w-7 h-7 rounded-lg bg-emerald-50 text-[#064E3B] flex items-center justify-center font-extrabold text-[11px] tabular-nums">1</div>
+                            <div>
+                              <span className="block font-extrabold text-slate-900">الفصل الدراسي الأول</span>
+                              <span className="block text-[10px] text-slate-400">كشف درجات الفصل الأول</span>
+                            </div>
+                          </div>
+                          <svg className="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                        </button>
+
+                        <button
+                          onClick={() => handleDownloadSubjectPdf('SEM2')}
+                          className="w-full px-3 py-2.5 rounded-xl text-right text-xs font-bold text-slate-700 hover:bg-emerald-50 hover:text-[#064E3B] active:scale-[0.99] transition-all flex items-center justify-between gap-2 cursor-pointer"
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <div className="w-7 h-7 rounded-lg bg-emerald-50 text-[#064E3B] flex items-center justify-center font-extrabold text-[11px] tabular-nums">2</div>
+                            <div>
+                              <span className="block font-extrabold text-slate-900">الفصل الدراسي الثاني</span>
+                              <span className="block text-[10px] text-slate-400">كشف درجات الفصل الثاني</span>
+                            </div>
+                          </div>
+                          <svg className="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                        </button>
+
+                        <button
+                          onClick={() => handleDownloadSubjectPdf('YEARLY')}
+                          className="w-full px-3 py-2.5 rounded-xl text-right text-xs font-bold bg-[#064E3B]/5 text-[#064E3B] hover:bg-[#064E3B] hover:text-white active:scale-[0.99] transition-all flex items-center justify-between gap-2 cursor-pointer group"
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <div className="w-7 h-7 rounded-lg bg-[#064E3B] text-white group-hover:bg-white/20 flex items-center justify-center font-extrabold text-[11px] tabular-nums">1+2</div>
+                            <div>
+                              <span className="block font-extrabold">السنة الدراسية الكاملة</span>
+                              <span className="block text-[10px] text-slate-500 group-hover:text-emerald-100">شامل الفصلين والمعدل السنوي</span>
+                            </div>
+                          </div>
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
+          </div>
 
-            <div className="bg-white p-1.5 rounded-xl border border-slate-200/80 flex flex-wrap items-center gap-1.5 shadow-2xs">
-              <span className="text-[11px] font-extrabold text-slate-500 px-2 flex items-center gap-1.5 whitespace-nowrap">
-                <svg className="w-3.5 h-3.5 text-[#064E3B]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                <span>تحميل الكشف (PDF):</span>
-              </span>
-
-              <button
-                onClick={() => handleDownloadSubjectPdf('SEM1')}
-                disabled={downloadingPdf !== null || studentsData.length === 0}
-                className="flex-1 sm:flex-initial px-3 py-1.5 rounded-lg text-[11px] font-extrabold bg-emerald-50 text-[#064E3B] border border-emerald-200/80 hover:bg-[#064E3B] hover:text-white transition-all disabled:opacity-45 disabled:pointer-events-none flex items-center justify-center gap-1.5 whitespace-nowrap cursor-pointer"
-              >
-                {downloadingPdf === 'SEM1' ? (
-                  <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-                ) : (
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                )}
-                <span>الفصل الأول</span>
-              </button>
-
-              <button
-                onClick={() => handleDownloadSubjectPdf('SEM2')}
-                disabled={downloadingPdf !== null || studentsData.length === 0}
-                className="flex-1 sm:flex-initial px-3 py-1.5 rounded-lg text-[11px] font-extrabold bg-emerald-50 text-[#064E3B] border border-emerald-200/80 hover:bg-[#064E3B] hover:text-white transition-all disabled:opacity-45 disabled:pointer-events-none flex items-center justify-center gap-1.5 whitespace-nowrap cursor-pointer"
-              >
-                {downloadingPdf === 'SEM2' ? (
-                  <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-                ) : (
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                )}
-                <span>الفصل الثاني</span>
-              </button>
-
-              <button
-                onClick={() => handleDownloadSubjectPdf('YEARLY')}
-                disabled={downloadingPdf !== null || studentsData.length === 0}
-                className="flex-1 sm:flex-initial px-3 py-1.5 rounded-lg text-[11px] font-extrabold bg-[#064E3B] text-white hover:bg-emerald-900 transition-all disabled:opacity-45 disabled:pointer-events-none flex items-center justify-center gap-1.5 whitespace-nowrap cursor-pointer shadow-2xs"
-              >
-                {downloadingPdf === 'YEARLY' ? (
-                  <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-                ) : (
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                )}
-                <span>السنة الكاملة</span>
-              </button>
+          {/* TAB NAVIGATION (Clean Single Strip) */}
+          <div className="px-3 py-2 sm:px-5 bg-slate-50/70 border-b border-slate-200/60">
+            <div className="flex bg-slate-200/60 p-1 rounded-xl w-full max-w-xl">
+              <TabButton id="sem1" label="الفصل الأول" />
+              <TabButton id="sem2" label="الفصل الثاني" />
+              <TabButton id="recap" label="المحصلة" />
+              <TabButton id="remidi" label="التكميلي" />
             </div>
           </div>
 
@@ -1005,18 +1063,6 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
               </div>
             ) : (
               <div className="max-w-4xl mx-auto space-y-2">
-                {activeTab !== 'recap' && !isLocked && (
-                  <div className="flex justify-end pb-1">
-                    <button 
-                      onClick={handleGlobalToggle}
-                      className="text-xs font-bold text-[#064E3B] bg-emerald-50 hover:bg-emerald-100 border border-emerald-200/70 px-3 py-1.5 rounded-xl transition-colors flex items-center gap-1.5 whitespace-nowrap"
-                    >
-                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg>
-                      <span>{isGlobalDirect ? 'تبديل للنمط التفصيلي (نصفي + نهائي)' : 'تبديل للنمط المباشر (0-100)'}</span>
-                    </button>
-                  </div>
-                )}
-
                 <div className="hidden md:grid grid-cols-12 gap-3 px-4 py-2.5 bg-slate-200/70 text-slate-600 text-xs font-extrabold rounded-xl">
                   <div className="col-span-1 text-center">#</div>
                   <div className="col-span-4 text-right">اسم الطالب</div>
