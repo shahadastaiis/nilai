@@ -2,7 +2,8 @@ import {
   User, Role, AcademicYear, StudentEnrollment, GradeStatus, 
   UserStatus, MasterSubject, SubjectView, Class, ClassSubject, 
   GradeRecord, StudentGradeView, ClassRecapRow, ClassRemidiRecapRow, GradeInputType,
-  GradeEditRequest, EditRequestStatus, RemidiRecord, RemidiSettings
+  GradeEditRequest, EditRequestStatus, RemidiRecord, RemidiSettings,
+  AcademicHistoryYearColumn, AcademicHistorySubjectCell, AcademicHistorySubjectRow, StudentAcademicHistory
 } from '../types';
 
 // ============================================================================
@@ -1217,14 +1218,17 @@ export const getClassStudents = async (classSubjectId: string): Promise<{ studen
   }).filter(x => x !== null) as { student: User, grade: GradeRecord }[];
 };
 
-export const getStudentGrades = async (studentId: string, yearId: string): Promise<StudentGradeView[]> => {
-  const yearClassIds = CLASSES.filter(c => c.academicYearId === yearId).map(c => c.id);
+export const getStudentGrades = async (studentId: string, yearId: string, classId?: string): Promise<StudentGradeView[]> => {
+  const classesInYear = CLASSES.filter(c => c.academicYearId === yearId && (!classId || c.id === classId));
+  const yearClassIds = classesInYear.map(c => c.id);
   const myEnrollments = ENROLLMENTS.filter(e => e.studentId === studentId && yearClassIds.includes(e.classId));
   const results: StudentGradeView[] = [];
   const remidiSettings = getRemidiSettings(yearId);
   const isRemidiPublished = Boolean(remidiSettings.isPublished);
+  const yearObj = ACADEMIC_YEARS.find(y => y.id === yearId);
 
   for (const enr of myEnrollments) {
+    const cls = CLASSES.find(c => c.id === enr.classId);
     const classSubjects = CLASS_SUBJECTS.filter(cs => cs.classId === enr.classId);
     for (const cs of classSubjects) {
       const master = MASTER_SUBJECTS.find(m => m.id === cs.masterSubjectId);
@@ -1233,6 +1237,10 @@ export const getStudentGrades = async (studentId: string, yearId: string): Promi
       
       let s1 = grade ? grade.sem1_uts + grade.sem1_uas : 0;
       let s2 = grade ? grade.sem2_uts + grade.sem2_uas : 0;
+
+      const hasSem1 = Boolean(grade && (grade.sem1_submitted || s1 > 0));
+      const hasSem2 = Boolean(grade && (grade.sem2_submitted || s2 > 0));
+      const hasGrade = Boolean(hasSem1 || hasSem2 || cs.status === GradeStatus.PUBLISHED || cs.status === GradeStatus.SUBMITTED);
 
       // Jika remidi sudah dipublish oleh Admin:
       // Mahasiswa yang remidi dan nilainya >= 60 akan mendapatkan nilai 60. Jika < 60 maka nilainya tidak berubah.
@@ -1248,6 +1256,8 @@ export const getStudentGrades = async (studentId: string, yearId: string): Promi
       }
 
       results.push({
+        classSubjectId: cs.id,
+        masterSubjectId: cs.masterSubjectId,
         subjectName: master ? master.name : 'Unknown',
         subjectCode: master ? master.id : '???',
         sks: master ? master.sks : 0,
@@ -1255,7 +1265,13 @@ export const getStudentGrades = async (studentId: string, yearId: string): Promi
         sem1_total: s1,
         sem2_total: s2,
         final_average: (s1 + s2) / 2,
-        yearName: ACADEMIC_YEARS.find(y => y.id === yearId)?.name,
+        hasSem1,
+        hasSem2,
+        hasGrade,
+        yearId: yearId,
+        yearName: yearObj?.name,
+        classId: cls?.id,
+        className: cls?.name,
         status: cs.status
       });
     }
@@ -1263,49 +1279,439 @@ export const getStudentGrades = async (studentId: string, yearId: string): Promi
   return results;
 };
 
-export const getAllStudentGrades = async (studentId: string): Promise<StudentGradeView[]> => {
-  const myEnrollments = ENROLLMENTS.filter(e => e.studentId === studentId);
-  const results: StudentGradeView[] = [];
+/**
+ * Mengurutkan Tahun Akademik dari yang paling awal (terlama) hingga paling akhir (terbaru).
+ */
+export const compareAcademicYearsAsc = (a?: AcademicYear, b?: AcademicYear): number => {
+  if (!a && !b) return 0;
+  if (!a) return -1;
+  if (!b) return 1;
 
-  for (const enr of myEnrollments) {
-    const cls = CLASSES.find(c => c.id === enr.classId);
-    const yearId = cls ? cls.academicYearId : '';
-    const yearName = ACADEMIC_YEARS.find(y => y.id === yearId)?.name;
-    const classSubjects = CLASS_SUBJECTS.filter(cs => cs.classId === enr.classId);
-    const remidiSettings = getRemidiSettings(yearId);
-    const isRemidiPublished = Boolean(remidiSettings.isPublished);
-    
+  // 1. Gunakan startDate jika keduanya valid dan berbeda
+  const tA = a.startDate ? Date.parse(a.startDate) : NaN;
+  const tB = b.startDate ? Date.parse(b.startDate) : NaN;
+  if (!isNaN(tA) && !isNaN(tB) && tA !== tB) {
+    return tA - tB;
+  }
+
+  // 2. Ekstrak angka tahun dari name atau id (contoh: "1445/1446" -> 1445, "2022/2023" -> 2022)
+  const extractFirstYearNum = (str: string): number => {
+    const match = String(str || '').match(/\d{4}/);
+    return match ? parseInt(match[0], 10) : NaN;
+  };
+
+  const numA = extractFirstYearNum(a.name || a.id);
+  const numB = extractFirstYearNum(b.name || b.id);
+  if (!isNaN(numA) && !isNaN(numB) && numA !== numB) {
+    return numA - numB;
+  }
+
+  // 3. Fallback perbandingan string
+  return String(a.name || a.id).localeCompare(String(b.name || b.id));
+};
+
+export const getAcademicPredicate = (score: number | null): string => {
+  if (score === null || isNaN(score)) return '—';
+  if (score >= 90) return 'ممتاز';
+  if (score >= 80) return 'جيد جداً';
+  if (score >= 70) return 'جيد';
+  if (score >= 60) return 'مقبول';
+  return 'راسب';
+};
+
+/**
+ * Mengambil daftar mahasiswa yang terdaftar pada Tahun Akademik (dan Kelas tertentu jika dipilih)
+ * untuk halaman KHS Mahasiswa pada role Admin.
+ */
+export const getKhsEnrolledStudents = async (
+  yearId: string,
+  classId?: string,
+  isFemaleAdmin?: boolean
+): Promise<{
+  student: User;
+  classObj: Class;
+  enrollmentId: string;
+  totalAcademicYearsCount: number;
+  hasRepeatedClass: boolean;
+}[]> => {
+  // Hitung jumlah tahun akademik dan status mengulang untuk setiap mahasiswa
+  const enrollmentsByStudent = new Map<string, StudentEnrollment[]>();
+  ENROLLMENTS.forEach(e => {
+    const arr = enrollmentsByStudent.get(e.studentId) || [];
+    arr.push(e);
+    enrollmentsByStudent.set(e.studentId, arr);
+  });
+
+  const classesInYear = CLASSES.filter(c => {
+    if (yearId && c.academicYearId !== yearId) return false;
+    if (classId && c.id !== classId) return false;
+    if (isFemaleAdmin && normalizeGender(c.gender) !== 'FEMALE') return false;
+    return true;
+  });
+
+  const classMap = new Map(classesInYear.map(c => [c.id, c]));
+  const allClassMap = new Map(CLASSES.map(c => [c.id, c]));
+  const userMap = new Map(USERS.map(u => [u.id, u]));
+
+  const matchingEnrollments = ENROLLMENTS.filter(e => classMap.has(e.classId));
+  const result: {
+    student: User;
+    classObj: Class;
+    enrollmentId: string;
+    totalAcademicYearsCount: number;
+    hasRepeatedClass: boolean;
+  }[] = [];
+
+  const seenStudentIds = new Set<string>();
+
+  for (const enr of matchingEnrollments) {
+    if (seenStudentIds.has(enr.studentId)) continue;
+    const student = userMap.get(enr.studentId);
+    const cls = classMap.get(enr.classId);
+    if (!student || !cls) continue;
+    if (student.role !== Role.STUDENT) continue;
+    if (student.status && student.status !== UserStatus.ACTIVE) continue;
+    if (isFemaleAdmin && normalizeGender(student.gender) !== 'FEMALE') continue;
+
+    seenStudentIds.add(enr.studentId);
+
+    const allStudentEnrollments = enrollmentsByStudent.get(student.id) || [];
+    const distinctYearIds = new Set<string>();
+    const classLevelCounts = new Map<string, number>();
+
+    allStudentEnrollments.forEach(se => {
+      const c = allClassMap.get(se.classId);
+      if (c && c.academicYearId) {
+        distinctYearIds.add(c.academicYearId);
+        const lvlKey = getClassLevelCode(c.name).toUpperCase() || c.name.trim();
+        classLevelCounts.set(lvlKey, (classLevelCounts.get(lvlKey) || 0) + 1);
+      }
+    });
+
+    let hasRepeatedClass = false;
+    classLevelCounts.forEach(cnt => {
+      if (cnt > 1) hasRepeatedClass = true;
+    });
+
+    result.push({
+      student,
+      classObj: cls,
+      enrollmentId: enr.id,
+      totalAcademicYearsCount: distinctYearIds.size || 1,
+      hasRepeatedClass
+    });
+  }
+
+  result.sort((a, b) => a.student.name.localeCompare(b.student.name));
+  return result;
+};
+
+/**
+ * Mengambil seluruh Riwayat Nilai Akademik Mahasiswa lintas seluruh Tahun Akademik
+ * yang pernah ditempuh di kampus, lengkap dengan deteksi Mengulang Kelas (Repeat Class),
+ * kolom Tahun Akademik dinamis, rata-rata per mata kuliah, dan rata-rata keseluruhan.
+ */
+export const getStudentAcademicHistory = async (studentId: string): Promise<StudentAcademicHistory | null> => {
+  const student = USERS.find(u => u.id === studentId);
+  if (!student) return null;
+
+  const yearMap = new Map(ACADEMIC_YEARS.map(y => [y.id, y]));
+  const classMap = new Map(CLASSES.map(c => [c.id, c]));
+  const masterSubMap = new Map(MASTER_SUBJECTS.map(m => [m.id, m]));
+
+  // 1. Ambil seluruh enrollment mahasiswa yang terhubung dengan class & academicYear yang valid
+  const rawEnrollments = ENROLLMENTS.filter(e => e.studentId === studentId);
+  const validEnrItems: {
+    enrollment: StudentEnrollment;
+    classObj: Class;
+    yearObj: AcademicYear;
+    classLevelKey: string;
+  }[] = [];
+
+  for (const enr of rawEnrollments) {
+    const cls = classMap.get(enr.classId);
+    if (!cls) continue;
+    const yr = yearMap.get(cls.academicYearId);
+    if (!yr) continue;
+    const classLevelKey = getClassLevelCode(cls.name).toUpperCase() || cls.name.trim();
+    validEnrItems.push({
+      enrollment: enr,
+      classObj: cls,
+      yearObj: yr,
+      classLevelKey
+    });
+  }
+
+  // 2. Urutkan secara kronologis dari tahun akademik paling awal hingga paling akhir
+  validEnrItems.sort((a, b) => compareAcademicYearsAsc(a.yearObj, b.yearObj));
+
+  // Jika ada duplikat enrollment pada tahun akademik & kelas yang sama persis, deduplikasi
+  const dedupedEnrItems: typeof validEnrItems = [];
+  const seenYearClass = new Set<string>();
+  for (const item of validEnrItems) {
+    const key = `${item.yearObj.id}__${item.classObj.id}`;
+    if (!seenYearClass.has(key)) {
+      seenYearClass.add(key);
+      dedupedEnrItems.push(item);
+    }
+  }
+
+  // 3. Kelompokkan berdasarkan identitas kelas (classLevelKey) untuk mendeteksi pengulangan kelas
+  // sesuai urutan tahun akademik:
+  // - Jika mahasiswa menempuh kelas yang sama pada >= 2 tahun akademik berbeda:
+  //   * Tahun akademik pertama (dan tahun-tahun sebelum percobaan terakhir pada kelas itu)
+  //     ditandai `isRepeatedLater = true` (Tidak Lulus - Mengulang).
+  //   * Tahun akademik kedua/berikutnya ditandai `isRepeatAttempt = true` (Mengulang Kelas).
+  //   * Hanya tahun akademik terakhir pada kelas tersebut yang diperhitungkan dalam rata-rata.
+  const groupsByClassLevel = new Map<string, typeof dedupedEnrItems>();
+  for (const item of dedupedEnrItems) {
+    const list = groupsByClassLevel.get(item.classLevelKey) || [];
+    list.push(item);
+    groupsByClassLevel.set(item.classLevelKey, list);
+  }
+
+  let repeatCount = 0;
+  const yearColumns: AcademicHistoryYearColumn[] = dedupedEnrItems.map(item => {
+    const sameClassList = groupsByClassLevel.get(item.classLevelKey) || [item];
+    const indexInClassGroup = sameClassList.indexOf(item);
+    const totalAttempts = sameClassList.length;
+    const isRepeatedLater = indexInClassGroup >= 0 && indexInClassGroup < totalAttempts - 1;
+    const isRepeatAttempt = indexInClassGroup > 0;
+    const nextAttempt = isRepeatedLater ? sameClassList[indexInClassGroup + 1] : undefined;
+
+    if (isRepeatAttempt) {
+      repeatCount++;
+    }
+
+    return {
+      enrollmentId: item.enrollment.id,
+      academicYearId: item.yearObj.id,
+      academicYearName: item.yearObj.name,
+      startDate: item.yearObj.startDate,
+      classId: item.classObj.id,
+      className: item.classObj.name,
+      classGender: normalizeGender(item.classObj.gender),
+      classLevelCode: item.classLevelKey,
+      attemptNumber: indexInClassGroup + 1,
+      totalAttemptsForClass: totalAttempts,
+      isRepeatedLater,
+      isRepeatAttempt,
+      repeatedInYearName: nextAttempt?.yearObj.name,
+      yearAverage: null
+    };
+  });
+
+  // 4. Kumpulkan seluruh mata kuliah yang pernah ditempuh mahasiswa di kelas-kelas tersebut
+  // Gunakan masterSubjectId (atau nama mata kuliah yang dinormalisasi jika masterSubjectId sama) sebagai kunci
+  const subjectCatalogMap = new Map<string, {
+    subjectKey: string;
+    masterSubjectId: string;
+    subjectCode: string;
+    subjectName: string;
+    sks: number;
+  }>();
+
+  for (const col of yearColumns) {
+    const classSubjects = CLASS_SUBJECTS.filter(cs => cs.classId === col.classId);
     for (const cs of classSubjects) {
-      const master = MASTER_SUBJECTS.find(m => m.id === cs.masterSubjectId);
-      const lecturer = USERS.find(u => u.id === cs.lecturerId);
-      const grade = GRADES.find(g => g.enrollmentId === enr.id && g.classSubjectId === cs.id);
-      
-      let s1 = grade ? grade.sem1_uts + grade.sem1_uas : 0;
-      let s2 = grade ? grade.sem2_uts + grade.sem2_uas : 0;
+      const master = masterSubMap.get(cs.masterSubjectId);
+      const subjectName = master ? master.name.trim() : cs.masterSubjectId;
+      const subjectCode = master ? master.id : cs.masterSubjectId;
+      const subjectKey = subjectName.toLowerCase();
 
-      if (isRemidiPublished) {
-        const rem1 = REMIDI_RECORDS.find(r => r.academicYearId === yearId && r.classSubjectId === cs.id && r.studentId === studentId && r.semester === 1 && r.isEligible && r.remidiScore !== undefined);
+      if (!subjectCatalogMap.has(subjectKey)) {
+        subjectCatalogMap.set(subjectKey, {
+          subjectKey,
+          masterSubjectId: cs.masterSubjectId,
+          subjectCode,
+          subjectName,
+          sks: master ? master.sks : 0
+        });
+      }
+    }
+  }
+
+  // 5. Bangun baris mata kuliah beserta sel nilai pada setiap kolom Tahun Akademik
+  const subjectRows: AcademicHistorySubjectRow[] = [];
+  const yearScoreAccumulators = new Map<string, { sum: number; count: number }>();
+  yearColumns.forEach(col => yearScoreAccumulators.set(col.enrollmentId, { sum: 0, count: 0 }));
+
+  subjectCatalogMap.forEach(subMeta => {
+    const cellsByEnrollmentId: { [enrollmentId: string]: AcademicHistorySubjectCell } = {};
+    let countedSum = 0;
+    let countedYearsCount = 0;
+
+    for (const col of yearColumns) {
+      const classSubjectsInCol = CLASS_SUBJECTS.filter(cs => cs.classId === col.classId);
+      const matchingCs = classSubjectsInCol.find(cs => {
+        const m = masterSubMap.get(cs.masterSubjectId);
+        const nameKey = (m ? m.name.trim() : cs.masterSubjectId).toLowerCase();
+        return nameKey === subMeta.subjectKey || cs.masterSubjectId === subMeta.masterSubjectId;
+      });
+
+      if (!matchingCs) {
+        cellsByEnrollmentId[col.enrollmentId] = {
+          enrollmentId: col.enrollmentId,
+          academicYearId: col.academicYearId,
+          enrolledInSubject: false,
+          hasGrade: false,
+          sem1Score: null,
+          sem2Score: null,
+          finalScore: null,
+          isCountedInAverage: false,
+          isExcludedDueToRepeat: false
+        };
+        continue;
+      }
+
+      const grade = GRADES.find(
+        g => g.enrollmentId === col.enrollmentId && g.classSubjectId === matchingCs.id
+      );
+
+      let s1 = grade ? (Number(grade.sem1_uts) || 0) + (Number(grade.sem1_uas) || 0) : 0;
+      let s2 = grade ? (Number(grade.sem2_uts) || 0) + (Number(grade.sem2_uas) || 0) : 0;
+
+      const hasSem1 = Boolean(grade && (grade.sem1_submitted || s1 > 0));
+      const hasSem2 = Boolean(grade && (grade.sem2_submitted || s2 > 0));
+
+      // Terapkan nilai Remidi apabila sudah dipublish pada tahun akademik tersebut
+      const remidiSettings = getRemidiSettings(col.academicYearId);
+      if (remidiSettings.isPublished) {
+        const rem1 = REMIDI_RECORDS.find(
+          r =>
+            r.academicYearId === col.academicYearId &&
+            r.classSubjectId === matchingCs.id &&
+            r.studentId === studentId &&
+            r.semester === 1 &&
+            r.isEligible &&
+            r.remidiScore !== undefined
+        );
         if (rem1 && rem1.remidiScore !== undefined) {
           s1 = rem1.remidiScore >= 60 ? 60 : rem1.remidiScore;
         }
-        const rem2 = REMIDI_RECORDS.find(r => r.academicYearId === yearId && r.classSubjectId === cs.id && r.studentId === studentId && r.semester === 2 && r.isEligible && r.remidiScore !== undefined);
+        const rem2 = REMIDI_RECORDS.find(
+          r =>
+            r.academicYearId === col.academicYearId &&
+            r.classSubjectId === matchingCs.id &&
+            r.studentId === studentId &&
+            r.semester === 2 &&
+            r.isEligible &&
+            r.remidiScore !== undefined
+        );
         if (rem2 && rem2.remidiScore !== undefined) {
           s2 = rem2.remidiScore >= 60 ? 60 : rem2.remidiScore;
         }
       }
 
-      results.push({
-        subjectName: master ? master.name : 'Unknown',
-        subjectCode: master ? master.id : '???',
-        sks: master ? master.sks : 0,
-        lecturerName: lecturer ? lecturer.name : 'Unknown',
-        sem1_total: s1,
-        sem2_total: s2,
-        final_average: (s1 + s2) / 2,
-        yearName: yearName,
-        status: cs.status
-      });
+      // Pastikan nilai yang belum tersedia tidak otomatis dianggap 0
+      const hasGrade = Boolean(hasSem1 || hasSem2);
+      let finalScore: number | null = null;
+
+      if (hasGrade) {
+        if (hasSem1 && hasSem2) {
+          finalScore = (s1 + s2) / 2;
+        } else if (hasSem1 && !hasSem2) {
+          // Jika mata kuliah sudah dipublish penuh tahun tetapi sem2 = 0, rata-rata tahunan (s1+s2)/2
+          // Namun jika masih berjalan dan sem2 belum diinput sama sekali, gunakan nilai yang sudah ada
+          finalScore = matchingCs.status === GradeStatus.PUBLISHED ? (s1 + s2) / 2 : s1;
+        } else if (!hasSem1 && hasSem2) {
+          finalScore = matchingCs.status === GradeStatus.PUBLISHED ? (s1 + s2) / 2 : s2;
+        }
+      }
+
+      // Logika Mengulang Kelas:
+      // Jika kolom tahun akademik ini berstatus `isRepeatedLater` (mahasiswa tidak lulus & mengulang kelas yang sama di tahun berikutnya),
+      // maka nilai tetap ditampilkan sebagai riwayat tetapi TIDAK dimasukkan dalam perhitungan rata-rata.
+      const isExcludedDueToRepeat = Boolean(hasGrade && col.isRepeatedLater);
+      const isCountedInAverage = Boolean(hasGrade && !col.isRepeatedLater && finalScore !== null);
+
+      if (isCountedInAverage && finalScore !== null) {
+        countedSum += finalScore;
+        countedYearsCount++;
+      }
+
+      if (hasGrade && finalScore !== null) {
+        const acc = yearScoreAccumulators.get(col.enrollmentId);
+        if (acc) {
+          acc.sum += finalScore;
+          acc.count += 1;
+        }
+      }
+
+      cellsByEnrollmentId[col.enrollmentId] = {
+        enrollmentId: col.enrollmentId,
+        academicYearId: col.academicYearId,
+        classSubjectId: matchingCs.id,
+        enrolledInSubject: true,
+        hasGrade,
+        sem1Score: hasSem1 ? s1 : null,
+        sem2Score: hasSem2 ? s2 : null,
+        finalScore,
+        status: matchingCs.status,
+        isCountedInAverage,
+        isExcludedDueToRepeat
+      };
     }
+
+    const averageScore = countedYearsCount > 0 ? countedSum / countedYearsCount : null;
+
+    subjectRows.push({
+      subjectKey: subMeta.subjectKey,
+      masterSubjectId: subMeta.masterSubjectId,
+      subjectCode: subMeta.subjectCode,
+      subjectName: subMeta.subjectName,
+      sks: subMeta.sks,
+      cellsByEnrollmentId,
+      averageScore,
+      countedYearsCount,
+      predicate: getAcademicPredicate(averageScore)
+    });
+  });
+
+  // Isi rata-rata per kolom tahun akademik
+  yearColumns.forEach(col => {
+    const acc = yearScoreAccumulators.get(col.enrollmentId);
+    col.yearAverage = acc && acc.count > 0 ? acc.sum / acc.count : null;
+  });
+
+  // 6. Hitung Rata-rata Keseluruhan Semua Mata Kuliah (dari rata-rata setiap mata kuliah yang valid)
+  const validSubjectAverages = subjectRows
+    .map(r => r.averageScore)
+    .filter((v): v is number => v !== null && !isNaN(v));
+
+  const overallAverage =
+    validSubjectAverages.length > 0
+      ? validSubjectAverages.reduce((acc, v) => acc + v, 0) / validSubjectAverages.length
+      : null;
+
+  const uniqueClassesCount = groupsByClassLevel.size;
+  const distinctAcademicYears = new Set(yearColumns.map(c => c.academicYearId));
+
+  return {
+    student,
+    totalAcademicYears: distinctAcademicYears.size,
+    uniqueClassesCount,
+    repeatCount,
+    yearColumns,
+    subjectRows,
+    overallAverage,
+    overallPredicate: getAcademicPredicate(overallAverage)
+  };
+};
+
+export const getAllStudentGrades = async (studentId: string): Promise<StudentGradeView[]> => {
+  const history = await getStudentAcademicHistory(studentId);
+  if (!history) return [];
+
+  const results: StudentGradeView[] = [];
+  for (const col of history.yearColumns) {
+    const gradesInYear = await getStudentGrades(studentId, col.academicYearId, col.classId);
+    gradesInYear.forEach(g => {
+      results.push({
+        ...g,
+        isRepeat: col.isRepeatedLater
+      });
+    });
   }
   return results;
 };

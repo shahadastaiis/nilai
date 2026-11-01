@@ -126,6 +126,8 @@ export interface GradeRecord {
 }
 
 export interface StudentGradeView {
+  classSubjectId?: string;
+  masterSubjectId?: string;
   subjectName: string;
   subjectCode: string;
   sks: number;
@@ -133,9 +135,69 @@ export interface StudentGradeView {
   sem1_total: number;
   sem2_total: number;
   final_average: number;
+  hasSem1?: boolean;
+  hasSem2?: boolean;
+  hasGrade?: boolean;
+  yearId?: string;
   yearName?: string; // For Transcript
+  classId?: string;
+  className?: string;
   isRepeat?: boolean; // If true, this is an old grade that was repeated
   status: GradeStatus; // Added status field
+}
+
+export interface AcademicHistoryYearColumn {
+  enrollmentId: string;
+  academicYearId: string;
+  academicYearName: string;
+  startDate: string;
+  classId: string;
+  className: string;
+  classGender: 'MALE' | 'FEMALE';
+  classLevelCode: string;
+  attemptNumber: number;
+  totalAttemptsForClass: number;
+  isRepeatedLater: boolean; // Tahun pertama saat belum lulus & mengulang di tahun berikutnya
+  isRepeatAttempt: boolean; // Tahun saat mahasiswa mengulang kelas yang sama
+  repeatedInYearName?: string; // Nama tahun akademik berikutnya tempat mahasiswa mengulang
+  yearAverage: number | null;
+}
+
+export interface AcademicHistorySubjectCell {
+  enrollmentId: string;
+  academicYearId: string;
+  classSubjectId?: string;
+  enrolledInSubject: boolean;
+  hasGrade: boolean;
+  sem1Score: number | null;
+  sem2Score: number | null;
+  finalScore: number | null;
+  status?: GradeStatus;
+  isCountedInAverage: boolean;
+  isExcludedDueToRepeat: boolean;
+}
+
+export interface AcademicHistorySubjectRow {
+  subjectKey: string;
+  masterSubjectId: string;
+  subjectCode: string;
+  subjectName: string;
+  sks: number;
+  cellsByEnrollmentId: { [enrollmentId: string]: AcademicHistorySubjectCell };
+  averageScore: number | null;
+  countedYearsCount: number;
+  predicate: string;
+}
+
+export interface StudentAcademicHistory {
+  student: User;
+  totalAcademicYears: number;
+  uniqueClassesCount: number;
+  repeatCount: number;
+  yearColumns: AcademicHistoryYearColumn[];
+  subjectRows: AcademicHistorySubjectRow[];
+  overallAverage: number | null;
+  overallPredicate: string;
 }
 
 export interface GradeDetail {

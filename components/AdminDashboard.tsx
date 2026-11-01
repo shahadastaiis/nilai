@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { User, AcademicYear, StudentEnrollment, Role, GradeStatus, MasterSubject, SubjectView, UserStatus, Class, ClassSubject, ClassRecapRow, ClassRemidiRecapRow, StudentGradeView, GradeEditRequest, RemidiRecord, RemidiSettings } from '../types';
-import { getAcademicYears, getAdminData, assignStudentToClass, bulkAssignStudentsToClass, createSubjectAssignment, bulkCreateSubjectAssignments, getSubjectsByYear, getEnrollmentsByYear, getClassEnrollments, toggleSemesterStatus, subscribeToData, createClass, getClassesByYear, getClassRecap, getClassRemidiRecap, getMasterSubjects, bulkCreateUsers, bulkCreateMasterSubjects, removeSubjectAssignment, removeStudentFromClass, publishClassGrades, updateSubjectStatus, reloadSpecificData, normalizeGender, getStudentGrades, getAllStudentGrades, publishAllGradesInYear, unpublishAllGradesInYear, getGradeEditRequests, respondGradeEditRequest, updateUser, updateMasterSubject, deleteGradeEditRequest, getRemidiSettings, toggleRemidiInputStatus, toggleRemidiPublishStatus, syncAndGetRemidiCandidates, toggleRemidiEligibility, bulkSetRemidiEligibility, saveRemidiScore } from '../services/mockData';
+import { User, AcademicYear, StudentEnrollment, Role, GradeStatus, MasterSubject, SubjectView, UserStatus, Class, ClassSubject, ClassRecapRow, ClassRemidiRecapRow, StudentGradeView, GradeEditRequest, RemidiRecord, RemidiSettings, StudentAcademicHistory } from '../types';
+import { getAcademicYears, getAdminData, assignStudentToClass, bulkAssignStudentsToClass, createSubjectAssignment, bulkCreateSubjectAssignments, getSubjectsByYear, getEnrollmentsByYear, getClassEnrollments, toggleSemesterStatus, subscribeToData, createClass, getClassesByYear, getClassRecap, getClassRemidiRecap, getMasterSubjects, bulkCreateUsers, bulkCreateMasterSubjects, removeSubjectAssignment, removeStudentFromClass, publishClassGrades, updateSubjectStatus, reloadSpecificData, normalizeGender, getStudentGrades, getAllStudentGrades, getKhsEnrolledStudents, getStudentAcademicHistory, getAcademicPredicate, compareAcademicYearsAsc, generatePdf, publishAllGradesInYear, unpublishAllGradesInYear, getGradeEditRequests, respondGradeEditRequest, updateUser, updateMasterSubject, deleteGradeEditRequest, getRemidiSettings, toggleRemidiInputStatus, toggleRemidiPublishStatus, syncAndGetRemidiCandidates, toggleRemidiEligibility, bulkSetRemidiEligibility, saveRemidiScore } from '../services/mockData';
 import { showSuccess, showError, confirmDelete, confirmAction } from '../utils/swal';
 import * as XLSX from 'xlsx';
 import ExcelJS from 'exceljs';
@@ -155,7 +155,15 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, activeMenu, onMen
             {activeMenu === 'remidi' && <RemidiAdminManager yearId={selectedYear} refreshKey={refreshKey} isFemaleAdmin={isFemaleAdmin} />}
             {activeMenu === 'settings' && <GradeSettingsManager yearId={selectedYear} refreshKey={refreshKey} isFemaleAdmin={isFemaleAdmin} />}
             {activeMenu === 'report' && <RecapManager yearId={selectedYear} years={years} isFemaleAdmin={isFemaleAdmin} />}
-            {activeMenu === 'khs' && <KhsManager yearId={selectedYear} isFemaleAdmin={isFemaleAdmin} />}
+            {activeMenu === 'khs' && (
+              <KhsManager
+                yearId={selectedYear}
+                years={years}
+                onYearChange={setSelectedYear}
+                refreshKey={refreshKey}
+                isFemaleAdmin={isFemaleAdmin}
+              />
+            )}
         </div>
     </div>
   );
@@ -2284,207 +2292,1125 @@ const RecapManager = ({ yearId, years, isFemaleAdmin }: { yearId: string, years?
     );
 };
 
-interface GroupedGrade {
-    name: string;
-    avgScore: number;
-    count: number;
-    totalSum: number;
-    predicate: string;
+interface KhsStudentEnrollmentItem {
+    student: User;
+    classObj: Class;
+    enrollmentId: string;
+    totalAcademicYearsCount: number;
+    hasRepeatedClass: boolean;
 }
 
-const KhsManager = ({ yearId, isFemaleAdmin }: { yearId: string, isFemaleAdmin?: boolean }) => {
-    const [students, setStudents] = useState<User[]>([]);
+const formatAcademicScore = (val: number | null | undefined, maxDecimals = 1): string => {
+    if (val === null || val === undefined || isNaN(val)) return '—';
+    const rounded = Number(val.toFixed(maxDecimals));
+    return String(rounded).replace('.', ',');
+};
+
+const KhsManager = ({
+    yearId,
+    years,
+    onYearChange,
+    refreshKey,
+    isFemaleAdmin
+}: {
+    yearId: string;
+    years: AcademicYear[];
+    onYearChange: (yrId: string) => void;
+    refreshKey: number;
+    isFemaleAdmin?: boolean;
+}) => {
+    // Mode tampilan: 'YEAR_KHS' (KHS berdasarkan Tahun Akademik & Kelas) atau 'HISTORY' (Riwayat Nilai Akademik Mahasiswa lintas tahun)
+    const [activeView, setActiveView] = useState<'YEAR_KHS' | 'HISTORY'>('YEAR_KHS');
+    const [selectedClassId, setSelectedClassId] = useState<string>('ALL');
+    const [classesInYear, setClassesInYear] = useState<Class[]>([]);
+    const [enrolledItems, setEnrolledItems] = useState<KhsStudentEnrollmentItem[]>([]);
     const [searchTerm, setSearchTerm] = useState('');
-    const [selectedStudent, setSelectedStudent] = useState<User | null>(null);
-    const [groupedGrades, setGroupedGrades] = useState<GroupedGrade[]>([]);
-    const [overallAvg, setOverallAvg] = useState<{score: number, predicate: string}>({ score: 0, predicate: '-' });
-    const [loading, setLoading] = useState(false);
+    const [selectedStudentId, setSelectedStudentId] = useState<string>('');
 
+    // Data untuk KHS Tahun Akademik yang dipilih
+    const [yearGrades, setYearGrades] = useState<StudentGradeView[]>([]);
+    const [loadingYearKhs, setLoadingYearKhs] = useState(false);
+
+    // Data untuk Halaman Riwayat Nilai Akademik Mahasiswa (lintas seluruh tahun akademik)
+    const [academicHistory, setAcademicHistory] = useState<StudentAcademicHistory | null>(null);
+    const [loadingHistory, setLoadingHistory] = useState(false);
+    const [showSemesterBreakdown, setShowSemesterBreakdown] = useState(false);
+
+    // State Download PDF KHS
+    const [downloadingPdf, setDownloadingPdf] = useState<'SEM1' | 'SEM2' | 'YEARLY' | null>(null);
+    const [showDownloadMenu, setShowDownloadMenu] = useState(false);
+
+    // Urutkan daftar tahun akademik
+    const sortedYears = useMemo(() => {
+        return [...years].sort((a, b) => compareAcademicYearsAsc(b, a));
+    }, [years]);
+
+    // 1. Muat daftar kelas ketika Tahun Akademik berubah
     useEffect(() => {
-        getAdminData().then(d => {
-            setStudents(isFemaleAdmin ? d.students.filter(s => s.gender === 'FEMALE') : d.students);
+        if (!yearId) {
+            setClassesInYear([]);
+            return;
+        }
+        getClassesByYear(yearId).then(clsList => {
+            const filtered = isFemaleAdmin ? clsList.filter(c => normalizeGender(c.gender) === 'FEMALE') : clsList;
+            setClassesInYear(filtered);
+            setSelectedClassId(prev => {
+                if (prev === 'ALL') return 'ALL';
+                return filtered.some(c => c.id === prev) ? prev : 'ALL';
+            });
         });
-    }, [isFemaleAdmin]);
+    }, [yearId, refreshKey, isFemaleAdmin]);
 
-    const getPredicate = (score: number): string => {
-        if (score >= 90) return 'ممتاز';
-        if (score >= 80) return 'جيد جداً';
-        if (score >= 70) return 'جيد';
-        if (score >= 60) return 'مقبول';
-        return 'راسب';
+    // 2. Muat daftar mahasiswa berdasarkan Tahun Akademik & Kelas yang dipilih
+    useEffect(() => {
+        if (!yearId) {
+            setEnrolledItems([]);
+            return;
+        }
+        const targetClassId = selectedClassId === 'ALL' ? undefined : selectedClassId;
+        getKhsEnrolledStudents(yearId, targetClassId, isFemaleAdmin).then(items => {
+            setEnrolledItems(items);
+            if (items.length > 0) {
+                setSelectedStudentId(prev => (items.some(i => i.student.id === prev) ? prev : items[0].student.id));
+            } else {
+                setSelectedStudentId('');
+            }
+        });
+    }, [yearId, selectedClassId, refreshKey, isFemaleAdmin]);
+
+    // Filter mahasiswa berdasarkan pencarian Nama atau NIM
+    const filteredEnrolledItems = useMemo(() => {
+        const term = searchTerm.trim().toLowerCase();
+        if (!term) return enrolledItems;
+        return enrolledItems.filter(
+            item =>
+                item.student.name.toLowerCase().includes(term) ||
+                item.student.id.toLowerCase().includes(term)
+        );
+    }, [enrolledItems, searchTerm]);
+
+    // Mahasiswa yang sedang dipilih
+    const selectedEnrolledItem = useMemo(() => {
+        return enrolledItems.find(i => i.student.id === selectedStudentId) || null;
+    }, [enrolledItems, selectedStudentId]);
+
+    // 3. Muat data KHS khusus Tahun Akademik & Kelas yang dipilih + data Riwayat Akademik Lengkap
+    useEffect(() => {
+        if (!selectedStudentId || !yearId) {
+            setYearGrades([]);
+            setAcademicHistory(null);
+            return;
+        }
+
+        let cancelled = false;
+        setLoadingYearKhs(true);
+        setLoadingHistory(true);
+
+        const specificClassId = selectedEnrolledItem?.classObj.id || (selectedClassId !== 'ALL' ? selectedClassId : undefined);
+
+        // Ambil nilai KHS murni untuk Tahun Akademik & Kelas yang sedang dipilih
+        getStudentGrades(selectedStudentId, yearId, specificClassId).then(gradesData => {
+            if (!cancelled) {
+                setYearGrades(gradesData);
+                setLoadingYearKhs(false);
+            }
+        });
+
+        // Ambil seluruh Riwayat Nilai Akademik Mahasiswa lintas tahun akademik
+        getStudentAcademicHistory(selectedStudentId).then(histData => {
+            if (!cancelled) {
+                setAcademicHistory(histData);
+                setLoadingHistory(false);
+            }
+        });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [selectedStudentId, yearId, selectedEnrolledItem?.classObj.id, selectedClassId, refreshKey]);
+
+    // Statistik KHS untuk Tahun Akademik yang dipilih (tidak menganggap nilai kosong sebagai 0)
+    const yearKhsStats = useMemo(() => {
+        const gradedSubjects = yearGrades.filter(g => g.hasGrade);
+        const sem1Graded = yearGrades.filter(g => g.hasSem1);
+        const sem2Graded = yearGrades.filter(g => g.hasSem2);
+
+        const sem1Avg =
+            sem1Graded.length > 0
+                ? sem1Graded.reduce((acc, g) => acc + g.sem1_total, 0) / sem1Graded.length
+                : null;
+        const sem2Avg =
+            sem2Graded.length > 0
+                ? sem2Graded.reduce((acc, g) => acc + g.sem2_total, 0) / sem2Graded.length
+                : null;
+
+        // Hitung rata-rata per mata kuliah yang sudah memiliki nilai pada tahun akademik ini
+        const subjectAvgs: number[] = gradedSubjects.map(g => {
+            if (g.hasSem1 && g.hasSem2) return (g.sem1_total + g.sem2_total) / 2;
+            if (g.hasSem1 && !g.hasSem2) return g.status === GradeStatus.PUBLISHED ? (g.sem1_total + g.sem2_total) / 2 : g.sem1_total;
+            if (!g.hasSem1 && g.hasSem2) return g.status === GradeStatus.PUBLISHED ? (g.sem1_total + g.sem2_total) / 2 : g.sem2_total;
+            return g.final_average;
+        });
+
+        const yearlyAvg =
+            subjectAvgs.length > 0
+                ? subjectAvgs.reduce((acc, v) => acc + v, 0) / subjectAvgs.length
+                : null;
+
+        return {
+            totalSubjects: yearGrades.length,
+            gradedCount: gradedSubjects.length,
+            sem1Avg,
+            sem2Avg,
+            yearlyAvg,
+            predicate: getAcademicPredicate(yearlyAvg)
+        };
+    }, [yearGrades]);
+
+    // Handler Download PDF KHS Mahasiswa (untuk Tahun Akademik yang sedang dipilih)
+    const handleDownloadStudentPdf = async (pdfType: 'SEM1' | 'SEM2' | 'YEARLY') => {
+        setShowDownloadMenu(false);
+        if (!selectedStudentId || !yearId) return;
+        setDownloadingPdf(pdfType);
+        try {
+            const { base64, filename } = await generatePdf(selectedStudentId, pdfType, yearId);
+            const byteCharacters = atob(base64);
+            const byteNumbers = new Array(byteCharacters.length);
+            for (let i = 0; i < byteCharacters.length; i++) {
+                byteNumbers[i] = byteCharacters.charCodeAt(i);
+            }
+            const byteArray = new Uint8Array(byteNumbers);
+            const blob = new Blob([byteArray], { type: 'application/pdf' });
+
+            const link = document.createElement('a');
+            const url = URL.createObjectURL(blob);
+            link.href = url;
+            link.download = filename || `KHS_${pdfType}_${selectedStudentId}.pdf`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+
+            showSuccess('تم تحميل كشف الدرجات (PDF) بنجاح');
+        } catch (err: any) {
+            showError(err?.message || 'فشل إنشاء ملف PDF من الخادم');
+        } finally {
+            setDownloadingPdf(null);
+        }
     };
 
-    useEffect(() => {
-        if (selectedStudent) {
-            setLoading(true);
-            getAllStudentGrades(selectedStudent.id).then(allGrades => {
-                const groupedMap = new Map<string, { total: number, count: number }>();
-
-                allGrades.forEach(g => {
-                    const key = g.subjectName.trim();
-                    const current = groupedMap.get(key) || { total: 0, count: 0 };
-                    current.total += g.final_average;
-                    current.count += 1;
-                    groupedMap.set(key, current);
-                });
-
-                const processed: GroupedGrade[] = [];
-                let grandTotal = 0;
-                let grandCount = 0;
-
-                groupedMap.forEach((val, key) => {
-                    const avg = val.total / val.count;
-                    processed.push({
-                        name: key,
-                        avgScore: avg,
-                        count: val.count,
-                        totalSum: val.total,
-                        predicate: getPredicate(avg)
-                    });
-                    grandTotal += avg;
-                    grandCount++; 
-                });
-
-                setGroupedGrades(processed);
-                
-                const finalAvgScore = grandCount > 0 ? grandTotal / grandCount : 0;
-                setOverallAvg({
-                    score: finalAvgScore,
-                    predicate: getPredicate(finalAvgScore)
-                });
-
-                setLoading(false);
+    // Handler Export Excel untuk Riwayat Nilai Akademik Mahasiswa
+    const handleExportHistoryExcel = async () => {
+        if (!academicHistory || academicHistory.subjectRows.length === 0) return;
+        try {
+            const wb = new ExcelJS.Workbook();
+            const ws = wb.addWorksheet('Riwayat Nilai Akademik', {
+                views: [{ rightToLeft: true }]
             });
-        } else {
-            setGroupedGrades([]);
-            setOverallAvg({ score: 0, predicate: '-' });
-        }
-    }, [selectedStudent]);
 
-    const filteredStudents = useMemo(() => {
-         return students.filter(s => 
-            s.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-            s.id.includes(searchTerm)
-        );
-    }, [students, searchTerm]);
+            // Judul & Identitas Mahasiswa
+            ws.addRow(['سجل التاريخ الأكاديمي الشامل للطالب (Riwayat Nilai Akademik Mahasiswa)']);
+            ws.addRow(['اسم الطالب (Nama)', academicHistory.student.name]);
+            ws.addRow(['الرقم الأكاديمي (NIM)', academicHistory.student.id]);
+            ws.addRow(['إجمالي الأعوام الدراسية (Total Tahun Akademik)', academicHistory.totalAcademicYears]);
+            ws.addRow([]);
+
+            // Baris Header 1: No | Nama Mata Kuliah | Tahun Akademik ... | Rata-rata
+            const headerRow1 = [
+                'الرقم (No)',
+                'المقرر الدراسي (Nama Mata Kuliah)',
+                ...academicHistory.yearColumns.map(col => col.academicYearName),
+                'المعدل (Rata-rata)'
+            ];
+            ws.addRow(headerRow1);
+
+            // Baris Header 2: Keterangan Kelas & Status Mengulang
+            const headerRow2 = [
+                '',
+                'الفصل الدراسي (Keterangan Kelas)',
+                ...academicHistory.yearColumns.map(col =>
+                    col.isRepeatedLater
+                        ? `${col.className} (راسب - معيد للفصل / Tidak Lulus - Mengulang)`
+                        : col.isRepeatAttempt
+                        ? `${col.className} (سنة الإعادة / Mengulang)`
+                        : col.className
+                ),
+                ''
+            ];
+            ws.addRow(headerRow2);
+
+            // Baris Data Mata Kuliah
+            academicHistory.subjectRows.forEach((row, idx) => {
+                const rowVals: any[] = [
+                    idx + 1,
+                    row.subjectName,
+                    ...academicHistory.yearColumns.map(col => {
+                        const cell = row.cellsByEnrollmentId[col.enrollmentId];
+                        if (!cell || !cell.enrolledInSubject || !cell.hasGrade || cell.finalScore === null) {
+                            return '—';
+                        }
+                        const formatted = formatAcademicScore(cell.finalScore, 1);
+                        return cell.isExcludedDueToRepeat ? `${formatted} (لا تُحسب - معيد)` : formatted;
+                    }),
+                    formatAcademicScore(row.averageScore, 1)
+                ];
+                ws.addRow(rowVals);
+            });
+
+            // Baris Paling Bawah: Rata-rata Keseluruhan
+            const footerRow = [
+                '',
+                'المعدل العام لجميع المقررات (Rata-rata Keseluruhan)',
+                ...academicHistory.yearColumns.map(col => formatAcademicScore(col.yearAverage, 1)),
+                formatAcademicScore(academicHistory.overallAverage, 2)
+            ];
+            ws.addRow(footerRow);
+
+            const buffer = await wb.xlsx.writeBuffer();
+            const blob = new Blob([buffer], {
+                type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `Riwayat_Akademik_${academicHistory.student.id}_${academicHistory.student.name}.xlsx`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            showSuccess('تم تصدير سجل التاريخ الأكاديمي بنجاح');
+        } catch (e) {
+            showError('فشل تصدير ملف Excel');
+        }
+    };
+
+    const currentYearName = useMemo(() => {
+        return years.find(y => y.id === yearId)?.name || yearId;
+    }, [years, yearId]);
+
+    // Hitung jumlah mahasiswa per kelas pada tahun akademik yang dipilih
+    const classStudentCounts = useMemo(() => {
+        const map: { [classId: string]: number } = {};
+        enrolledItems.forEach(item => {
+            map[item.classObj.id] = (map[item.classObj.id] || 0) + 1;
+        });
+        return map;
+    }, [enrolledItems]);
+
+    const [studentDropdownOpen, setStudentDropdownOpen] = useState(false);
+
+    // Navigasi Cepat Mahasiswa Sebelumnya / Berikutnya di dalam filter saat ini
+    const currentStudentIndex = useMemo(() => {
+        return filteredEnrolledItems.findIndex(i => i.student.id === selectedStudentId);
+    }, [filteredEnrolledItems, selectedStudentId]);
+
+    const handlePrevStudent = () => {
+        if (currentStudentIndex > 0) {
+            setSelectedStudentId(filteredEnrolledItems[currentStudentIndex - 1].student.id);
+        }
+    };
+
+    const handleNextStudent = () => {
+        if (currentStudentIndex >= 0 && currentStudentIndex < filteredEnrolledItems.length - 1) {
+            setSelectedStudentId(filteredEnrolledItems[currentStudentIndex + 1].student.id);
+        }
+    };
 
     return (
         <div className="space-y-4">
-             <div className="relative">
-                 <input 
-                    type="text" 
-                    placeholder="ابحث بالاسم أو الرقم الأكاديمي..." 
-                    value={searchTerm}
-                    onChange={e => setSearchTerm(e.target.value)}
-                    className="w-full pl-6 pr-12 py-3 bg-white border border-gray-200 rounded-xl shadow-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all text-sm font-medium"
-                 />
-                 <svg className="absolute right-4 top-3.5 w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-             </div>
+            {/* ===================================================================== */}
+            {/* 1. TOP CONTROL PANEL: TAHUN AKADEMIK, KELAS, & DROPDOWN MAHASISWA      */}
+            {/* ===================================================================== */}
+            <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-2xs">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-3.5 items-end">
+                    {/* Filter 1: Tahun Akademik */}
+                    <div className="lg:col-span-3 space-y-1.5">
+                        <label className="block text-xs font-extrabold text-slate-600">
+                            العام الدراسي
+                        </label>
+                        <select
+                            value={yearId}
+                            onChange={e => onYearChange(e.target.value)}
+                            aria-label="العام الدراسي"
+                            className="w-full h-10.5 bg-slate-50/90 hover:bg-slate-100/80 focus:bg-white border border-slate-200/90 rounded-xl px-3.5 text-xs font-extrabold text-[#064E3B] outline-none focus:ring-2 focus:ring-emerald-500/15 focus:border-[#064E3B] transition-all cursor-pointer tabular-nums"
+                        >
+                            {sortedYears.map(y => (
+                                <option key={y.id} value={y.id}>
+                                    {y.name} {y.isActive ? '— (الحالي)' : ''}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
 
-             <div className="grid grid-cols-1 md:grid-cols-12 gap-4 md:gap-6 h-auto md:h-[600px]">
-                 {/* Student List Sidebar */}
-                 <div className="md:col-span-4 bg-white border border-gray-200/80 rounded-2xl overflow-hidden flex flex-col shadow-sm max-h-[260px] md:max-h-none">
-                     <div className="p-3.5 sm:p-4 bg-gray-50/70 border-b border-gray-100 font-extrabold text-gray-700 flex justify-between items-center text-xs">
-                         <span>قائمة الطلاب</span>
-                         <span className="text-[11px] bg-gray-200/80 px-2.5 py-0.5 rounded-md text-gray-700 tabular-nums">{filteredStudents.length}</span>
-                     </div>
-                     <div className="flex-1 overflow-y-auto p-2.5 custom-scrollbar space-y-1.5">
-                         {filteredStudents.slice(0, 50).map(s => (
-                             <div 
-                                key={s.id} 
-                                onClick={() => setSelectedStudent(s)}
-                                className={`p-2.5 sm:p-3 rounded-xl cursor-pointer transition-all flex items-center justify-between group ${selectedStudent?.id === s.id ? 'bg-emerald-50 border border-emerald-500 shadow-sm' : 'bg-white hover:bg-gray-50 border border-transparent hover:border-gray-100'}`}
-                             >
-                                 <div className="flex items-center gap-2.5 min-w-0">
-                                     <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-extrabold shrink-0 ${selectedStudent?.id === s.id ? 'bg-[#064E3B] text-white' : 'bg-gray-100 text-gray-500'}`}>
-                                         {s.name.charAt(0)}
-                                     </div>
-                                     <div className="min-w-0">
-                                         <div className={`font-bold text-xs truncate ${selectedStudent?.id === s.id ? 'text-emerald-950' : 'text-gray-800'}`}>{s.name}</div>
-                                         <div className="text-[10px] text-gray-400 font-mono tabular-nums mt-0.5">{s.id}</div>
-                                     </div>
-                                 </div>
-                                 {selectedStudent?.id === s.id && <svg className="w-4 h-4 text-emerald-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" /></svg>}
-                             </div>
-                         ))}
-                         {filteredStudents.length === 0 && <div className="p-8 text-center text-gray-400 text-xs font-bold">لا توجد نتائج مطابقة</div>}
-                     </div>
-                 </div>
+                    {/* Filter 2: Kelas pada Tahun Akademik tersebut */}
+                    <div className="lg:col-span-3 space-y-1.5">
+                        <label className="flex items-center justify-between text-xs font-extrabold text-slate-600">
+                            <span>الفصل الدراسي</span>
+                            <span className="text-[11px] font-bold text-slate-400 tabular-nums">
+                                {classesInYear.length} فصول
+                            </span>
+                        </label>
+                        <select
+                            value={selectedClassId}
+                            onChange={e => setSelectedClassId(e.target.value)}
+                            aria-label="الفصل الدراسي"
+                            className="w-full h-10.5 bg-slate-50/90 hover:bg-slate-100/80 focus:bg-white border border-slate-200/90 rounded-xl px-3.5 text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500/15 focus:border-[#064E3B] transition-all cursor-pointer"
+                        >
+                            <option value="ALL">جميع الفصول ({enrolledItems.length} طالب)</option>
+                            {classesInYear.map(c => (
+                                <option key={c.id} value={c.id}>
+                                    {c.name} — {normalizeGender(c.gender) === 'FEMALE' ? 'بنات' : 'بنين'} ({classStudentCounts[c.id] || 0})
+                                </option>
+                            ))}
+                        </select>
+                    </div>
 
-                 {/* Results Area */}
-                 <div className="md:col-span-8 bg-white border border-gray-200/80 rounded-2xl p-4 sm:p-6 shadow-sm relative flex flex-col min-h-[360px] md:h-full">
-                     {selectedStudent ? (
-                         <>
-                             <div className="flex justify-between items-start mb-4 sm:mb-5 pb-3.5 sm:pb-4 border-b border-gray-100">
-                                 <div>
-                                     <h3 className="text-base sm:text-lg font-extrabold text-gray-900 mb-1">{selectedStudent.name}</h3>
-                                     <div className="flex items-center gap-2.5 text-xs text-gray-500 flex-wrap">
-                                         <span className="font-mono tabular-nums bg-gray-100 px-2.5 py-0.5 rounded-md font-bold text-gray-700">الرقم الأكاديمي: {selectedStudent.id}</span>
-                                         <span className="w-1 h-1 bg-gray-300 rounded-full"></span>
-                                         <span className="font-bold">{selectedStudent.gender === 'MALE' ? 'طالب' : 'طالبة'}</span>
-                                     </div>
-                                 </div>
-                             </div>
+                    {/* Filter 3: Dropdown Pemilihan & Pencarian Mahasiswa (Di Atas) */}
+                    <div className="sm:col-span-2 lg:col-span-6 space-y-1.5 relative">
+                        <label className="flex items-center justify-between text-xs font-extrabold text-slate-600">
+                            <span>اختيار الطالب (بحث بالاسم أو الرقم الأكاديمي NIM)</span>
+                            <span className="text-[11px] font-bold text-[#064E3B] tabular-nums">
+                                {filteredEnrolledItems.length > 0
+                                    ? `${currentStudentIndex + 1} من ${filteredEnrolledItems.length} طالب`
+                                    : '0 طالب'}
+                            </span>
+                        </label>
 
-                             {loading ? (
-                                 <div className="flex-1 flex flex-col items-center justify-center">
-                                     <div className="w-10 h-10 border-4 border-emerald-100 border-t-emerald-600 rounded-full animate-spin mb-3"></div>
-                                     <p className="text-gray-400 text-xs font-bold">جاري تحميل السجل التراكمي...</p>
-                                 </div>
-                             ) : groupedGrades.length > 0 ? (
-                                 <div className="flex-1 overflow-x-auto overflow-y-auto custom-scrollbar">
-                                     <table className="w-full min-w-[340px] text-xs text-right border-collapse">
-                                         <thead className="bg-gray-50 text-gray-500 font-bold sticky top-0">
-                                             <tr>
-                                                 <th className="py-3 px-3 border-b border-gray-200 w-12 text-center">#</th>
-                                                 <th className="py-3 px-3 border-b border-gray-200">المقرر الدراسي</th>
-                                                 <th className="py-3 px-3 border-b border-gray-200 text-center w-24">الدرجة</th>
-                                                 <th className="py-3 px-3 border-b border-gray-200 text-center w-32">التقدير</th>
-                                             </tr>
-                                         </thead>
-                                         <tbody className="divide-y divide-gray-100">
-                                             {groupedGrades.map((g, idx) => (
-                                                 <tr key={idx} className="hover:bg-gray-50/50 transition-colors">
-                                                     <td className="py-3 px-3 text-center text-gray-400 font-mono tabular-nums">{idx + 1}</td>
-                                                     <td className="py-3 px-3 font-bold text-gray-800">{g.name}</td>
-                                                     <td className="py-3 px-3 text-center font-extrabold text-gray-800 tabular-nums">{g.avgScore.toFixed(0)}</td>
-                                                     <td className="py-3 px-3 text-center">
-                                                         <span className={`px-2.5 py-0.5 rounded-md text-[11px] font-bold ${g.avgScore < 60 ? 'bg-red-50 text-red-600 border border-red-100' : 'bg-emerald-50 text-emerald-700 border border-emerald-100'}`}>
-                                                             {g.predicate}
-                                                         </span>
-                                                     </td>
-                                                 </tr>
-                                             ))}
-                                             {/* FINAL ROW: GRAND TOTAL */}
-                                             <tr className="bg-emerald-50/40 border-t-2 border-emerald-200">
-                                                 <td colSpan={2} className="py-4 px-4 text-left font-extrabold text-emerald-950 text-sm">المعدل التراكمي العام</td>
-                                                 <td className="py-4 px-3 text-center font-extrabold text-base text-emerald-950 tabular-nums">{overallAvg.score.toFixed(2)}</td>
-                                                 <td className="py-4 px-3 text-center">
-                                                     <span className="bg-[#064E3B] text-white px-3 py-1 rounded-lg text-xs font-bold shadow-sm">
-                                                         {overallAvg.predicate}
-                                                     </span>
-                                                 </td>
-                                             </tr>
-                                         </tbody>
-                                     </table>
-                                 </div>
-                             ) : (
-                                 <div className="flex-1 flex flex-col items-center justify-center text-center py-20 text-gray-400">
-                                     <div className="w-12 h-12 bg-gray-50 rounded-xl flex items-center justify-center mb-3">
-                                         <svg className="w-6 h-6 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                                     </div>
-                                     <p className="text-xs font-bold">لا توجد سجلات أكاديمية لهذا الطالب</p>
-                                 </div>
-                             )}
-                         </>
-                     ) : (
-                         <div className="flex-1 flex flex-col items-center justify-center h-full text-gray-400">
-                             <svg className="w-16 h-16 mb-3 opacity-15 text-[#064E3B]" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
-                             <p className="text-xs font-bold text-gray-400">اختر طالباً من القائمة لعرض السجل التراكمي</p>
-                         </div>
-                     )}
-                 </div>
-             </div>
+                        <div className="flex items-center gap-2">
+                            {/* Searchable Dropdown Trigger Button */}
+                            <div className="relative flex-1 min-w-0">
+                                <button
+                                    type="button"
+                                    onClick={() => setStudentDropdownOpen(prev => !prev)}
+                                    className={`w-full h-10.5 px-3.5 rounded-xl border text-right transition-all flex items-center justify-between gap-2 cursor-pointer ${
+                                        studentDropdownOpen
+                                            ? 'bg-white border-[#064E3B] ring-2 ring-emerald-500/15'
+                                            : 'bg-slate-50/90 hover:bg-slate-100/80 border-slate-200/90'
+                                    }`}
+                                >
+                                    {selectedEnrolledItem ? (
+                                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                            <span className="w-6 h-6 rounded-lg bg-[#064E3B] text-white text-[11px] font-extrabold flex items-center justify-center shrink-0">
+                                                {selectedEnrolledItem.student.name.charAt(0)}
+                                            </span>
+                                            <span className="font-extrabold text-xs sm:text-sm text-slate-900 truncate">
+                                                {selectedEnrolledItem.student.name}
+                                            </span>
+                                            <span className="text-slate-300 shrink-0">·</span>
+                                            <span className="font-mono tabular-nums text-xs font-bold text-[#064E3B] shrink-0">
+                                                {selectedEnrolledItem.student.id}
+                                            </span>
+                                            <span className="hidden sm:inline text-[11px] text-slate-400 truncate">
+                                                ({selectedEnrolledItem.classObj.name})
+                                            </span>
+                                        </div>
+                                    ) : (
+                                        <span className="text-xs font-bold text-slate-400">
+                                            اختر طالباً من القائمة...
+                                        </span>
+                                    )}
+
+                                    <svg
+                                        className={`w-4 h-4 text-slate-400 shrink-0 transition-transform duration-200 ${
+                                            studentDropdownOpen ? 'rotate-180 text-[#064E3B]' : ''
+                                        }`}
+                                        fill="none"
+                                        viewBox="0 0 24 24"
+                                        stroke="currentColor"
+                                    >
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                    </svg>
+                                </button>
+
+                                {/* Floating Searchable Student Dropdown Popover */}
+                                {studentDropdownOpen && (
+                                    <>
+                                        <div
+                                            className="fixed inset-0 z-30"
+                                            onClick={() => setStudentDropdownOpen(false)}
+                                        />
+                                        <div className="absolute right-0 left-0 top-12 z-40 bg-white rounded-2xl border border-slate-200 shadow-xl overflow-hidden animate-fade-in">
+                                            {/* Search Input Inside Dropdown */}
+                                            <div className="p-2.5 bg-slate-50/80 border-b border-slate-100">
+                                                <div className="relative">
+                                                    <input
+                                                        type="text"
+                                                        autoFocus
+                                                        placeholder="ابحث باسم الطالب أو الرقم الأكاديمي (NIM)..."
+                                                        value={searchTerm}
+                                                        onChange={e => setSearchTerm(e.target.value)}
+                                                        className="w-full h-9 pl-8 pr-9 bg-white border border-slate-200/90 rounded-xl text-xs font-bold text-slate-800 outline-none focus:border-[#064E3B] focus:ring-2 focus:ring-emerald-500/15 transition-all"
+                                                    />
+                                                    <svg
+                                                        className="absolute right-3 top-2.5 w-4 h-4 text-slate-400 pointer-events-none"
+                                                        fill="none"
+                                                        viewBox="0 0 24 24"
+                                                        stroke="currentColor"
+                                                    >
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                                                    </svg>
+                                                    {searchTerm && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setSearchTerm('')}
+                                                            className="absolute left-2.5 top-2 w-5 h-5 rounded-full text-slate-400 hover:text-red-600 flex items-center justify-center cursor-pointer"
+                                                            title="مسح البحث"
+                                                        >
+                                                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                                            </svg>
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            {/* Student Options List */}
+                                            <div className="max-h-64 overflow-y-auto divide-y divide-slate-100/70 custom-scrollbar p-1.5">
+                                                {filteredEnrolledItems.map(item => {
+                                                    const isSelected = selectedStudentId === item.student.id;
+                                                    return (
+                                                        <button
+                                                            key={item.student.id}
+                                                            type="button"
+                                                            onClick={() => {
+                                                                setSelectedStudentId(item.student.id);
+                                                                setStudentDropdownOpen(false);
+                                                            }}
+                                                            className={`w-full px-3 py-2.5 rounded-xl text-right transition-colors flex items-center justify-between gap-3 cursor-pointer ${
+                                                                isSelected
+                                                                    ? 'bg-emerald-50/90 text-[#064E3B]'
+                                                                    : 'hover:bg-slate-50 text-slate-800'
+                                                            }`}
+                                                        >
+                                                            <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                                                <span
+                                                                    className={`w-7 h-7 rounded-lg text-xs font-extrabold flex items-center justify-center shrink-0 ${
+                                                                        isSelected
+                                                                            ? 'bg-[#064E3B] text-white'
+                                                                            : 'bg-slate-100 text-slate-600'
+                                                                    }`}
+                                                                >
+                                                                    {item.student.name.charAt(0)}
+                                                                </span>
+                                                                <div className="min-w-0 flex-1">
+                                                                    <div className="flex items-center gap-2">
+                                                                        <span className="font-extrabold text-xs sm:text-sm truncate">
+                                                                            {item.student.name}
+                                                                        </span>
+                                                                        {item.hasRepeatedClass && (
+                                                                            <span className="text-[10px] font-bold text-amber-700">
+                                                                                · معيد
+                                                                            </span>
+                                                                        )}
+                                                                    </div>
+                                                                    <div className="flex items-center gap-1.5 text-[11px] text-slate-400 mt-0.5">
+                                                                        <span className="font-mono tabular-nums text-slate-600 font-bold">
+                                                                            {item.student.id}
+                                                                        </span>
+                                                                        <span>·</span>
+                                                                        <span className="truncate">{item.classObj.name}</span>
+                                                                        <span>·</span>
+                                                                        <span className="text-[#064E3B] font-bold tabular-nums">
+                                                                            {item.totalAcademicYearsCount} أعوام
+                                                                        </span>
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+
+                                                            {isSelected && (
+                                                                <svg className="w-4 h-4 text-[#064E3B] shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                                                                </svg>
+                                                            )}
+                                                        </button>
+                                                    );
+                                                })}
+
+                                                {filteredEnrolledItems.length === 0 && (
+                                                    <div className="py-8 text-center text-slate-400 text-xs font-bold">
+                                                        لا يوجد طلاب مطابقون للبحث
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+
+                            {/* Prev / Next Student Quick Navigation Buttons */}
+                            <div className="flex items-center gap-1 shrink-0">
+                                <button
+                                    type="button"
+                                    onClick={handlePrevStudent}
+                                    disabled={currentStudentIndex <= 0}
+                                    className="w-10.5 h-10.5 rounded-xl bg-slate-50 hover:bg-emerald-50 text-slate-600 hover:text-[#064E3B] border border-slate-200/90 flex items-center justify-center disabled:opacity-35 disabled:pointer-events-none transition-all cursor-pointer"
+                                    title="الطالب السابق"
+                                    aria-label="الطالب السابق"
+                                >
+                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M9 5l7 7-7 7" />
+                                    </svg>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={handleNextStudent}
+                                    disabled={currentStudentIndex < 0 || currentStudentIndex >= filteredEnrolledItems.length - 1}
+                                    className="w-10.5 h-10.5 rounded-xl bg-slate-50 hover:bg-emerald-50 text-slate-600 hover:text-[#064E3B] border border-slate-200/90 flex items-center justify-center disabled:opacity-35 disabled:pointer-events-none transition-all cursor-pointer"
+                                    title="الطالب التالي"
+                                    aria-label="الطالب التالي"
+                                >
+                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M15 19l-7-7 7-7" />
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {/* ===================================================================== */}
+            {/* 2. FULL-WIDTH ACADEMIC RECORD CARD (100% LEBAR DARI KANAN KE KIRI)     */}
+            {/* ===================================================================== */}
+            <div className="w-full bg-white border border-slate-200/80 rounded-2xl shadow-2xs overflow-hidden">
+                {!selectedEnrolledItem ? (
+                    <div className="py-20 px-4 text-center text-slate-400">
+                        <svg className="w-12 h-12 mx-auto mb-3 opacity-25 text-[#064E3B]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 14l9-5-9-5-9 5 9 5zm0 0l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14z" />
+                        </svg>
+                        <p className="text-sm font-extrabold text-slate-500">
+                            اختر طالباً من القائمة المنسدلة أعلاه لعرض كشف الدرجات أو السجل التاريخي
+                        </p>
+                    </div>
+                ) : (
+                    <div className="flex flex-col">
+                        {/* ================================================================= */}
+                        {/* ELEGANT UNIFIED STUDENT HEADER & MODE SWITCHER                    */}
+                        {/* ================================================================= */}
+                        <div className="p-4 sm:p-6 bg-gradient-to-l from-emerald-950/[0.03] via-slate-50/50 to-white border-b border-slate-200/80 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                            {/* Identitas Mahasiswa (Sesuai Poin 2: Nama, NIM, Total Tahun Akademik) */}
+                            <div className="flex items-start sm:items-center gap-3.5 min-w-0">
+                                <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-[#064E3B] text-white font-extrabold text-base sm:text-lg flex items-center justify-center shrink-0 shadow-xs">
+                                    {(academicHistory?.student.name || selectedEnrolledItem.student.name).charAt(0)}
+                                </div>
+
+                                <div className="min-w-0 flex-1">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                        <h3 className="text-base sm:text-lg font-extrabold text-slate-900 tracking-tight">
+                                            {academicHistory?.student.name || selectedEnrolledItem.student.name}
+                                        </h3>
+                                        <span className="text-slate-300">·</span>
+                                        <span className="text-xs sm:text-sm font-bold text-[#064E3B]">
+                                            {activeView === 'YEAR_KHS'
+                                                ? `كشف درجات العام الدراسي (${currentYearName})`
+                                                : 'سجل التاريخ الأكاديمي الشامل'}
+                                        </span>
+                                    </div>
+
+                                    <div className="flex items-center gap-x-3 gap-y-1 text-xs text-slate-500 mt-1 flex-wrap">
+                                        <span>
+                                            الرقم الأكاديمي (NIM):{' '}
+                                            <strong className="font-mono tabular-nums font-extrabold text-slate-800">
+                                                {academicHistory?.student.id || selectedEnrolledItem.student.id}
+                                            </strong>
+                                        </span>
+                                        <span className="text-slate-300">·</span>
+                                        <span>
+                                            الفصل الحالي:{' '}
+                                            <strong className="font-extrabold text-slate-800">
+                                                {selectedEnrolledItem.classObj.name}
+                                            </strong>
+                                        </span>
+                                        <span className="text-slate-300">·</span>
+                                        <span>
+                                            إجمالي الأعوام الدراسية بالجامعة:{' '}
+                                            <strong className="font-extrabold text-[#064E3B] tabular-nums">
+                                                {academicHistory?.totalAcademicYears ?? selectedEnrolledItem.totalAcademicYearsCount}{' '}
+                                                {(academicHistory?.totalAcademicYears ?? selectedEnrolledItem.totalAcademicYearsCount) === 1
+                                                    ? 'عام دراسي'
+                                                    : 'أعوام دراسية'}
+                                            </strong>
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Mode Switcher & Contextual Action Buttons */}
+                            <div className="flex flex-wrap items-center justify-between sm:justify-end gap-2.5 shrink-0">
+                                {/* Segmented Switcher: KHS Tahun Akademik vs Riwayat Nilai Akademik */}
+                                <div className="bg-slate-100/90 p-1 rounded-xl flex items-center gap-1 border border-slate-200/60">
+                                    <button
+                                        type="button"
+                                        onClick={() => setActiveView('YEAR_KHS')}
+                                        className={`px-3.5 py-2 rounded-lg text-xs font-extrabold transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+                                            activeView === 'YEAR_KHS'
+                                                ? 'bg-[#064E3B] text-white shadow-2xs'
+                                                : 'text-slate-600 hover:text-slate-900'
+                                        }`}
+                                    >
+                                        <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                        </svg>
+                                        <span>كشف العام الدراسي</span>
+                                    </button>
+
+                                    <button
+                                        type="button"
+                                        onClick={() => setActiveView('HISTORY')}
+                                        className={`px-3.5 py-2 rounded-lg text-xs font-extrabold transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+                                            activeView === 'HISTORY'
+                                                ? 'bg-[#064E3B] text-white shadow-2xs'
+                                                : 'text-slate-600 hover:text-slate-900'
+                                        }`}
+                                    >
+                                        <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                        </svg>
+                                        <span>سجل التاريخ الأكاديمي</span>
+                                    </button>
+                                </div>
+
+                                {/* Contextual Actions */}
+                                {activeView === 'YEAR_KHS' ? (
+                                    <div className="relative">
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowDownloadMenu(prev => !prev)}
+                                            disabled={downloadingPdf !== null || yearGrades.length === 0}
+                                            className="h-10 px-3.5 rounded-xl bg-[#064E3B] text-white hover:bg-emerald-900 active:scale-95 transition-all shadow-2xs disabled:opacity-40 flex items-center gap-2 text-xs font-extrabold cursor-pointer"
+                                            title="تحميل كشف الدرجات (PDF)"
+                                        >
+                                            {downloadingPdf !== null ? (
+                                                <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                                </svg>
+                                            ) : (
+                                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                                                </svg>
+                                            )}
+                                            <span className="hidden sm:inline">تحميل PDF</span>
+                                        </button>
+
+                                        {showDownloadMenu && (
+                                            <>
+                                                <div
+                                                    className="fixed inset-0 bg-slate-900/40 backdrop-blur-[1px] z-40 sm:bg-transparent sm:backdrop-blur-none"
+                                                    onClick={() => setShowDownloadMenu(false)}
+                                                />
+                                                <div className="fixed bottom-0 inset-x-0 z-50 bg-white rounded-t-2xl p-4 pb-6 shadow-2xl border-t border-slate-200 sm:absolute sm:bottom-auto sm:inset-x-auto sm:left-0 sm:top-11 sm:w-60 sm:rounded-xl sm:p-2 sm:shadow-xl sm:border animate-fade-in">
+                                                    <div className="px-2.5 py-1.5 border-b border-slate-100 text-xs font-extrabold text-slate-800">
+                                                        تحميل كشف الدرجات ({currentYearName})
+                                                    </div>
+                                                    <div className="mt-1 space-y-1">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleDownloadStudentPdf('SEM1')}
+                                                            className="w-full px-3 py-2 rounded-lg text-right text-xs font-bold text-slate-700 hover:bg-emerald-50 hover:text-[#064E3B] flex items-center justify-between cursor-pointer"
+                                                        >
+                                                            <span>الفصل الدراسي الأول</span>
+                                                            <span className="text-[11px] font-mono text-slate-400">ف 1</span>
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleDownloadStudentPdf('SEM2')}
+                                                            className="w-full px-3 py-2 rounded-lg text-right text-xs font-bold text-slate-700 hover:bg-emerald-50 hover:text-[#064E3B] flex items-center justify-between cursor-pointer"
+                                                        >
+                                                            <span>الفصل الدراسي الثاني</span>
+                                                            <span className="text-[11px] font-mono text-slate-400">ف 2</span>
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleDownloadStudentPdf('YEARLY')}
+                                                            className="w-full px-3 py-2 rounded-lg text-right text-xs font-extrabold text-[#064E3B] bg-emerald-50/70 hover:bg-[#064E3B] hover:text-white flex items-center justify-between cursor-pointer"
+                                                        >
+                                                            <span>السنة الدراسية الكاملة</span>
+                                                            <span className="text-[11px] font-mono">1 + 2</span>
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <div className="flex items-center gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowSemesterBreakdown(prev => !prev)}
+                                            className={`h-10 px-3.5 rounded-xl text-xs font-extrabold border transition-all cursor-pointer ${
+                                                showSemesterBreakdown
+                                                    ? 'bg-emerald-50 text-[#064E3B] border-emerald-300'
+                                                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                                            }`}
+                                            title="إظهار أو إخفاء تفصيل الفصل الأول والثاني"
+                                        >
+                                            {showSemesterBreakdown ? 'إخفاء تفصيل (ف1/ف2)' : 'تفصيل (ف1 / ف2)'}
+                                        </button>
+
+                                        <button
+                                            type="button"
+                                            onClick={handleExportHistoryExcel}
+                                            disabled={!academicHistory || academicHistory.subjectRows.length === 0}
+                                            className="h-10 px-3.5 rounded-xl bg-[#064E3B] hover:bg-emerald-900 text-white text-xs font-extrabold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-40 shadow-2xs"
+                                            title="تصدير السجل التاريخي إلى Excel"
+                                        >
+                                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                                            </svg>
+                                            <span>تصدير Excel</span>
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* ================================================================= */}
+                        {/* BODY TABEL FULL-WIDTH (KHS TAHUN AKADEMIK ATAU RIWAYAT AKADEMIK)  */}
+                        {/* ================================================================= */}
+                        {activeView === 'YEAR_KHS' ? (
+                            loadingYearKhs ? (
+                                <div className="py-16 flex flex-col items-center justify-center">
+                                    <div className="w-8 h-8 border-2 border-emerald-100 border-t-[#064E3B] rounded-full animate-spin mb-2.5"></div>
+                                    <p className="text-slate-400 text-xs font-bold">جاري تحميل كشف درجات عام {currentYearName}...</p>
+                                </div>
+                            ) : yearGrades.length > 0 ? (
+                                <div className="overflow-x-auto">
+                                    <table className="w-full min-w-[600px] text-xs sm:text-sm text-right border-collapse">
+                                        <thead className="bg-slate-50/90 text-slate-600 font-extrabold border-b border-slate-200/80 text-xs">
+                                            <tr>
+                                                <th className="py-3.5 px-4 w-12 text-center">#</th>
+                                                <th className="py-3.5 px-4">المقرر الدراسي</th>
+                                                <th className="py-3.5 px-4">المحاضر</th>
+                                                <th className="py-3.5 px-4 text-center w-28">الفصل الأول</th>
+                                                <th className="py-3.5 px-4 text-center w-28">الفصل الثاني</th>
+                                                <th className="py-3.5 px-4 text-center w-28 bg-emerald-50/50 text-[#064E3B]">المعدل</th>
+                                                <th className="py-3.5 px-4 text-center w-28">التقدير</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100">
+                                            {yearGrades.map((g, idx) => {
+                                                const hasAny = Boolean(g.hasSem1 || g.hasSem2);
+                                                const rowAvg =
+                                                    g.hasSem1 && g.hasSem2
+                                                        ? (g.sem1_total + g.sem2_total) / 2
+                                                        : g.hasSem1 && !g.hasSem2
+                                                        ? g.status === GradeStatus.PUBLISHED
+                                                            ? (g.sem1_total + g.sem2_total) / 2
+                                                            : g.sem1_total
+                                                        : !g.hasSem1 && g.hasSem2
+                                                        ? g.status === GradeStatus.PUBLISHED
+                                                            ? (g.sem1_total + g.sem2_total) / 2
+                                                            : g.sem2_total
+                                                        : null;
+                                                const pred = getAcademicPredicate(rowAvg);
+
+                                                return (
+                                                    <tr key={idx} className="hover:bg-emerald-50/20 transition-colors">
+                                                        <td className="py-3 px-4 text-center text-slate-400 font-mono tabular-nums text-xs">
+                                                            {idx + 1}
+                                                        </td>
+                                                        <td className="py-3 px-4">
+                                                            <span className="font-extrabold text-slate-900">{g.subjectName}</span>
+                                                            <span className="text-[11px] text-slate-400 font-mono tabular-nums mr-2">
+                                                                {g.subjectCode}
+                                                            </span>
+                                                        </td>
+                                                        <td className="py-3 px-4 text-slate-600 text-xs font-medium">
+                                                            {g.lecturerName}
+                                                        </td>
+                                                        <td className="py-3 px-4 text-center tabular-nums font-bold">
+                                                            {g.hasSem1 ? (
+                                                                <span className={g.sem1_total < 60 ? 'text-red-600 font-extrabold' : 'text-slate-800'}>
+                                                                    {formatAcademicScore(g.sem1_total, 1)}
+                                                                </span>
+                                                            ) : (
+                                                                <span className="text-slate-300">—</span>
+                                                            )}
+                                                        </td>
+                                                        <td className="py-3 px-4 text-center tabular-nums font-bold">
+                                                            {g.hasSem2 ? (
+                                                                <span className={g.sem2_total < 60 ? 'text-red-600 font-extrabold' : 'text-slate-800'}>
+                                                                    {formatAcademicScore(g.sem2_total, 1)}
+                                                                </span>
+                                                            ) : (
+                                                                <span className="text-slate-300">—</span>
+                                                            )}
+                                                        </td>
+                                                        <td className="py-3 px-4 text-center bg-emerald-50/25 font-extrabold tabular-nums">
+                                                            {hasAny && rowAvg !== null ? (
+                                                                <span className={rowAvg < 60 ? 'text-red-600' : 'text-[#064E3B]'}>
+                                                                    {formatAcademicScore(rowAvg, 1)}
+                                                                </span>
+                                                            ) : (
+                                                                <span className="text-slate-300">—</span>
+                                                            )}
+                                                        </td>
+                                                        <td className="py-3 px-4 text-center text-xs font-extrabold">
+                                                            {hasAny && rowAvg !== null ? (
+                                                                <span className={rowAvg < 60 ? 'text-red-600' : 'text-emerald-800'}>
+                                                                    {pred}
+                                                                </span>
+                                                            ) : (
+                                                                <span className="text-slate-400 font-normal">لم ترصد</span>
+                                                            )}
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
+                                        </tbody>
+                                        <tfoot>
+                                            <tr className="bg-emerald-50/70 border-t-2 border-emerald-200 font-extrabold text-slate-900">
+                                                <td colSpan={3} className="py-3.5 px-4 text-left text-xs sm:text-sm text-[#064E3B]">
+                                                    المعدل السنوي للعام الدراسي ({currentYearName})
+                                                </td>
+                                                <td className="py-3.5 px-4 text-center tabular-nums text-slate-700">
+                                                    {formatAcademicScore(yearKhsStats.sem1Avg, 1)}
+                                                </td>
+                                                <td className="py-3.5 px-4 text-center tabular-nums text-slate-700">
+                                                    {formatAcademicScore(yearKhsStats.sem2Avg, 1)}
+                                                </td>
+                                                <td className="py-3.5 px-4 text-center tabular-nums text-base text-[#064E3B] bg-emerald-100/70">
+                                                    {formatAcademicScore(yearKhsStats.yearlyAvg, 2)}
+                                                </td>
+                                                <td className="py-3.5 px-4 text-center text-xs text-[#064E3B]">
+                                                    {yearKhsStats.predicate}
+                                                </td>
+                                            </tr>
+                                        </tfoot>
+                                    </table>
+                                </div>
+                            ) : (
+                                <div className="py-16 text-center text-slate-400 text-xs font-bold">
+                                    لا توجد مقررات مسجلة لهذا الطالب في عام {currentYearName}
+                                </div>
+                            )
+                        ) : (
+                            /* ============================================================= */
+                            /* TABEL DINAMIS RIWAYAT NILAI AKADEMIK MAHASISWA (FULL-WIDTH)   */
+                            /* ============================================================= */
+                            <div className="flex flex-col">
+                                {/* Info Bar jika Mahasiswa Pernah Mengulang Kelas */}
+                                {academicHistory && academicHistory.repeatCount > 0 && (
+                                    <div className="px-4 sm:px-6 py-2.5 bg-amber-50/70 border-b border-amber-200/70 text-xs text-amber-950 flex items-center gap-2">
+                                        <svg className="w-4 h-4 text-amber-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                        </svg>
+                                        <span>
+                                            <strong>ملاحظة إعادة الفصل:</strong> العام الدراسي الموسوم بـ{' '}
+                                            <strong className="text-red-700">راسب – معيد للفصل</strong> يُعرض كسجل تاريخي فقط (مشطوب) ولا يدخل في حساب المعدل، وتُعتمد درجة سنة الإعادة الأخيرة.
+                                        </span>
+                                    </div>
+                                )}
+
+                                {loadingHistory ? (
+                                    <div className="py-16 flex flex-col items-center justify-center">
+                                        <div className="w-8 h-8 border-2 border-emerald-100 border-t-[#064E3B] rounded-full animate-spin mb-2.5"></div>
+                                        <p className="text-slate-400 text-xs font-bold">جاري تحميل السجل التاريخي الشامل...</p>
+                                    </div>
+                                ) : academicHistory && academicHistory.subjectRows.length > 0 ? (
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full min-w-[640px] text-xs sm:text-sm text-right border-collapse">
+                                            <thead>
+                                                {/* BARIS HEADER 1: No | Nama Mata Kuliah | Kolom Tahun Akademik Dinamis | Rata-rata */}
+                                                <tr className="bg-slate-100/80 text-slate-700 font-extrabold border-b border-slate-200 text-xs">
+                                                    <th
+                                                        rowSpan={2}
+                                                        className="py-3 px-3.5 w-12 text-center border-l border-slate-200/70 bg-slate-100"
+                                                    >
+                                                        #
+                                                    </th>
+                                                    <th
+                                                        rowSpan={2}
+                                                        className="py-3 px-4 min-w-[180px] border-l border-slate-200/70 bg-slate-100"
+                                                    >
+                                                        المقرر الدراسي
+                                                    </th>
+
+                                                    {academicHistory.yearColumns.map(col => (
+                                                        <th
+                                                            key={col.enrollmentId}
+                                                            className={`py-2.5 px-4 text-center min-w-[130px] border-l border-slate-200/70 tabular-nums ${
+                                                                col.isRepeatedLater
+                                                                    ? 'bg-red-50/70 text-red-900'
+                                                                    : col.isRepeatAttempt
+                                                                    ? 'bg-emerald-50/60 text-[#064E3B]'
+                                                                    : 'bg-slate-100/80 text-slate-800'
+                                                            }`}
+                                                        >
+                                                            <span className="text-[11px] text-slate-400 font-bold block">العام الدراسي</span>
+                                                            <span className="text-xs sm:text-sm font-extrabold">{col.academicYearName}</span>
+                                                        </th>
+                                                    ))}
+
+                                                    <th
+                                                        rowSpan={2}
+                                                        className="py-3 px-4 text-center min-w-[110px] bg-emerald-50/70 text-[#064E3B] border-r border-emerald-200/60"
+                                                    >
+                                                        المعدل
+                                                    </th>
+                                                </tr>
+
+                                                {/* BARIS HEADER 2: Keterangan Kelas & Status Mengulang di Bawah Tahun Akademik */}
+                                                <tr className="bg-slate-50/90 text-slate-600 font-bold border-b-2 border-slate-200 text-xs">
+                                                    {academicHistory.yearColumns.map(col => (
+                                                        <th
+                                                            key={`${col.enrollmentId}_class`}
+                                                            className={`py-2 px-3 text-center border-l border-slate-200/70 ${
+                                                                col.isRepeatedLater
+                                                                    ? 'bg-red-50/40 text-red-800'
+                                                                    : col.isRepeatAttempt
+                                                                    ? 'bg-emerald-50/30 text-[#064E3B]'
+                                                                    : 'bg-slate-50/90 text-slate-600'
+                                                            }`}
+                                                        >
+                                                            <div className="font-extrabold text-slate-800">{col.className}</div>
+                                                            {col.isRepeatedLater && (
+                                                                <div className="text-[10px] text-red-600 font-extrabold mt-0.5">
+                                                                    راسب – معيد للفصل
+                                                                </div>
+                                                            )}
+                                                            {!col.isRepeatedLater && col.isRepeatAttempt && (
+                                                                <div className="text-[10px] text-emerald-700 font-extrabold mt-0.5">
+                                                                    سنة الإعادة (معتمدة)
+                                                                </div>
+                                                            )}
+                                                        </th>
+                                                    ))}
+                                                </tr>
+                                            </thead>
+
+                                            <tbody className="divide-y divide-slate-100">
+                                                {academicHistory.subjectRows.map((row, idx) => (
+                                                    <tr key={row.subjectKey} className="hover:bg-emerald-50/20 transition-colors">
+                                                        <td className="py-3 px-3.5 text-center text-slate-400 font-mono tabular-nums text-xs border-l border-slate-100">
+                                                            {idx + 1}
+                                                        </td>
+
+                                                        <td className="py-3 px-4 font-extrabold text-slate-900 border-l border-slate-100">
+                                                            <span>{row.subjectName}</span>
+                                                            <span className="text-[11px] text-slate-400 font-mono tabular-nums font-normal mr-2">
+                                                                {row.subjectCode}
+                                                            </span>
+                                                        </td>
+
+                                                        {academicHistory.yearColumns.map(col => {
+                                                            const cell = row.cellsByEnrollmentId[col.enrollmentId];
+                                                            if (!cell || !cell.enrolledInSubject || !cell.hasGrade || cell.finalScore === null) {
+                                                                return (
+                                                                    <td
+                                                                        key={col.enrollmentId}
+                                                                        className={`py-3 px-4 text-center border-l border-slate-100 text-slate-300 ${
+                                                                            col.isRepeatedLater ? 'bg-red-50/15' : ''
+                                                                        }`}
+                                                                    >
+                                                                        —
+                                                                    </td>
+                                                                );
+                                                            }
+
+                                                            const isLow = cell.finalScore < 60;
+
+                                                            return (
+                                                                <td
+                                                                    key={col.enrollmentId}
+                                                                    className={`py-3 px-4 text-center border-l border-slate-100 tabular-nums ${
+                                                                        cell.isExcludedDueToRepeat
+                                                                            ? 'bg-red-50/25'
+                                                                            : col.isRepeatAttempt
+                                                                            ? 'bg-emerald-50/15'
+                                                                            : ''
+                                                                    }`}
+                                                                >
+                                                                    <span
+                                                                        className={`font-extrabold ${
+                                                                            cell.isExcludedDueToRepeat
+                                                                                ? 'text-red-500/80 line-through decoration-red-400'
+                                                                                : isLow
+                                                                                ? 'text-red-600'
+                                                                                : 'text-slate-800'
+                                                                        }`}
+                                                                        title={
+                                                                            cell.isExcludedDueToRepeat
+                                                                                ? 'درجة العام السابق (لا تدخل في حساب المعدل بسبب إعادة الفصل)'
+                                                                                : undefined
+                                                                        }
+                                                                    >
+                                                                        {formatAcademicScore(cell.finalScore, 1)}
+                                                                    </span>
+
+                                                                    {showSemesterBreakdown && (
+                                                                        <div className="text-[10px] text-slate-400 tabular-nums mt-0.5">
+                                                                            ف1: {formatAcademicScore(cell.sem1Score, 0)} · ف2:{' '}
+                                                                            {formatAcademicScore(cell.sem2Score, 0)}
+                                                                        </div>
+                                                                    )}
+                                                                </td>
+                                                            );
+                                                        })}
+
+                                                        <td className="py-3 px-4 text-center bg-emerald-50/25 border-r border-emerald-100 tabular-nums font-extrabold">
+                                                            {row.averageScore !== null ? (
+                                                                <div className="flex items-center justify-center gap-1.5">
+                                                                    <span className={row.averageScore < 60 ? 'text-red-600' : 'text-[#064E3B]'}>
+                                                                        {formatAcademicScore(row.averageScore, 1)}
+                                                                    </span>
+                                                                    <span className="text-[11px] font-bold text-slate-400">
+                                                                        ({row.predicate})
+                                                                    </span>
+                                                                </div>
+                                                            ) : (
+                                                                <span className="text-slate-300">—</span>
+                                                            )}
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+
+                                            {/* BARIS PALING BAWAH: Rata-rata Keseluruhan Semua Mata Kuliah */}
+                                            <tfoot>
+                                                <tr className="bg-emerald-50/75 border-t-2 border-emerald-300 font-extrabold text-slate-900">
+                                                    <td
+                                                        colSpan={2}
+                                                        className="py-3.5 px-4 text-left border-l border-emerald-200/80 text-[#064E3B] text-xs sm:text-sm"
+                                                    >
+                                                        المعدل العام لجميع المقررات (Rata-rata Keseluruhan)
+                                                    </td>
+
+                                                    {academicHistory.yearColumns.map(col => (
+                                                        <td
+                                                            key={`${col.enrollmentId}_avg`}
+                                                            className={`py-3.5 px-4 text-center border-l border-emerald-200/60 tabular-nums ${
+                                                                col.isRepeatedLater
+                                                                    ? 'text-red-500/75 line-through bg-red-50/30'
+                                                                    : 'text-slate-700'
+                                                            }`}
+                                                        >
+                                                            {formatAcademicScore(col.yearAverage, 1)}
+                                                        </td>
+                                                    ))}
+
+                                                    <td className="py-3.5 px-4 text-center bg-[#064E3B] text-white tabular-nums">
+                                                        <span className="text-base font-extrabold">
+                                                            {formatAcademicScore(academicHistory.overallAverage, 2)}
+                                                        </span>
+                                                        <span className="text-[11px] font-bold text-emerald-100 mr-1.5">
+                                                            ({academicHistory.overallPredicate})
+                                                        </span>
+                                                    </td>
+                                                </tr>
+                                            </tfoot>
+                                        </table>
+                                    </div>
+                                ) : (
+                                    <div className="py-16 text-center text-slate-400 text-xs font-bold">
+                                        لا توجد سجلات تاريخية لهذا الطالب
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                )}
+            </div>
         </div>
     );
 };
