@@ -1,264 +1,28 @@
 import { 
   User, Role, AcademicYear, StudentEnrollment, GradeStatus, 
   UserStatus, MasterSubject, SubjectView, Class, ClassSubject, 
-  GradeRecord, StudentGradeView, ClassRecapRow, GradeInputType 
+  GradeRecord, StudentGradeView, ClassRecapRow, ClassRemidiRecapRow, GradeInputType,
+  GradeEditRequest, EditRequestStatus, RemidiRecord, RemidiSettings
 } from '../types';
 
-// --- CONFIGURATION ---
-const DEFAULT_API_URL = "https://script.google.com/macros/s/AKfycbzbanW-yQWFxF3AD46vz77tY9gjQYIFxIzzY_a3n5wyFjdROsGjL0BvxmR9w5ab-LzX/exec";
+// ============================================================================
+// CONFIGURATION (URL BACKEND SPREADSHEET / GOOGLE APPS SCRIPT)
+// Ubah URL di bawah ini secara langsung jika ada perubahan deployment:
+// ============================================================================
+export const API_URL = "https://script.google.com/macros/s/AKfycbzbanW-yQWFxF3AD46vz77tY9gjQYIFxIzzY_a3n5wyFjdROsGjL0BvxmR9w5ab-LzX/exec";
 export const DEFAULT_LOGO_URL = "https://i.imgur.com/cWxs1lh.png";
 
-const STORAGE_KEYS = {
-  DB: 'STAI_SIAKAD_DB_V1',
-  API_URL: 'STAI_SIAKAD_API_URL',
-  OFFLINE_MODE: 'STAI_SIAKAD_OFFLINE_MODE'
-};
-
-export const getApiUrl = (): string => {
-  try {
-    const saved = localStorage.getItem(STORAGE_KEYS.API_URL);
-    if (saved && saved.trim()) return saved.trim();
-  } catch (e) {
-    // ignore
-  }
-  return DEFAULT_API_URL;
-};
-
-export const setApiUrl = (url: string) => {
-  try {
-    localStorage.setItem(STORAGE_KEYS.API_URL, url.trim());
-    API_URL = url.trim();
-  } catch (e) {
-    // ignore
-  }
-};
-
-let API_URL = getApiUrl();
-let offlineMode = false;
+// Hapus sisa-sisa cache data dummy lama di browser
 try {
-  offlineMode = localStorage.getItem(STORAGE_KEYS.OFFLINE_MODE) === 'true';
+  localStorage.removeItem('STAI_SIAKAD_DB_V1');
+  localStorage.removeItem('STAI_SIAKAD_OFFLINE_MODE');
+  localStorage.removeItem('STAI_LOCAL_DB');
+  localStorage.removeItem('STAI_SIAKAD_API_URL');
 } catch (e) {
-  offlineMode = false;
+  // ignore
 }
 
-export const isOfflineModeActive = () => offlineMode;
-export const setOfflineMode = (val: boolean) => {
-  offlineMode = val;
-  try {
-    localStorage.setItem(STORAGE_KEYS.OFFLINE_MODE, val ? 'true' : 'false');
-  } catch (e) {}
-  notifyListeners();
-};
-
-export const getConnectionStatus = () => {
-  return {
-    isOffline: offlineMode,
-    apiUrl: API_URL
-  };
-};
-
-// --- DEFAULT SEED DATA (STAI IMAM SYAFI'I) ---
-const INITIAL_USERS: User[] = [
-  // Administrators
-  {
-    id: "admin",
-    password: "admin",
-    name: "د. عبد الله بن صالح الصالح",
-    role: Role.ADMIN,
-    gender: "MALE",
-    status: UserStatus.ACTIVE
-  },
-  {
-    id: "1001",
-    password: "admin",
-    name: "عمادة القبول والتسجيل",
-    role: Role.ADMIN,
-    gender: "MALE",
-    status: UserStatus.ACTIVE
-  },
-  // Lecturers
-  {
-    id: "19800101",
-    password: "dosen123",
-    name: "د. محمد بن صالح الفوزان",
-    role: Role.LECTURER,
-    gender: "MALE",
-    status: UserStatus.ACTIVE
-  },
-  {
-    id: "19850202",
-    password: "dosen123",
-    name: "أ.د. عبد الرحمن بن عبد العزيز السديس",
-    role: Role.LECTURER,
-    gender: "MALE",
-    status: UserStatus.ACTIVE
-  },
-  {
-    id: "19900303",
-    password: "dosen123",
-    name: "د. فاطمة بنت أحمد الشريف",
-    role: Role.LECTURER,
-    gender: "FEMALE",
-    status: UserStatus.ACTIVE
-  },
-  {
-    id: "19920404",
-    password: "dosen123",
-    name: "د. خالد بن إبراهيم الرومي",
-    role: Role.LECTURER,
-    gender: "MALE",
-    status: UserStatus.ACTIVE
-  },
-  // Students
-  {
-    id: "2024001",
-    password: "mhs123",
-    name: "أحمد بن عبد الله الخالدي",
-    role: Role.STUDENT,
-    gender: "MALE",
-    status: UserStatus.ACTIVE
-  },
-  {
-    id: "2024002",
-    password: "mhs123",
-    name: "عمر بن عثمان المنصور",
-    role: Role.STUDENT,
-    gender: "MALE",
-    status: UserStatus.ACTIVE
-  },
-  {
-    id: "2024003",
-    password: "mhs123",
-    name: "خالد بن الوليد السالم",
-    role: Role.STUDENT,
-    gender: "MALE",
-    status: UserStatus.ACTIVE
-  },
-  {
-    id: "2024004",
-    password: "mhs123",
-    name: "يوسف بن يعقوب القرشي",
-    role: Role.STUDENT,
-    gender: "MALE",
-    status: UserStatus.ACTIVE
-  },
-  {
-    id: "2024101",
-    password: "mhs123",
-    name: "عائشة بنت عبد الرحمن التميمي",
-    role: Role.STUDENT,
-    gender: "FEMALE",
-    status: UserStatus.ACTIVE
-  },
-  {
-    id: "2024102",
-    password: "mhs123",
-    name: "فاطمة بنت إبراهيم النجار",
-    role: Role.STUDENT,
-    gender: "FEMALE",
-    status: UserStatus.ACTIVE
-  },
-  {
-    id: "2024103",
-    password: "mhs123",
-    name: "مريم بنت سليمان الهاشمي",
-    role: Role.STUDENT,
-    gender: "FEMALE",
-    status: UserStatus.ACTIVE
-  }
-];
-
-const INITIAL_ACADEMIC_YEARS: AcademicYear[] = [
-  {
-    id: "1446-1447",
-    name: "1446/1447 هـ (2024/2025 م)",
-    isActive: true,
-    startDate: "2024-09-01",
-    isSem1Active: true,
-    isSem2Active: true
-  },
-  {
-    id: "1445-1446",
-    name: "1445/1446 هـ (2023/2024 م)",
-    isActive: false,
-    startDate: "2023-09-01",
-    isSem1Active: false,
-    isSem2Active: false
-  }
-];
-
-const INITIAL_MASTER_SUBJECTS: MasterSubject[] = [
-  { id: "ARB101", name: "النحو والصرف I", sks: 3 },
-  { id: "FIQ101", name: "فقه العبادات والمعاملات", sks: 3 },
-  { id: "TAF101", name: "تفسير آيات الأحكام", sks: 2 },
-  { id: "HAD101", name: "علوم الحديث ومصطلحه", sks: 2 },
-  { id: "AQD101", name: "العقيدة والتوحيد", sks: 2 },
-  { id: "USL101", name: "أصول الفقه وقواعده", sks: 3 },
-  { id: "BAL101", name: "البلاغة والبيان العربي", sks: 2 }
-];
-
-const INITIAL_CLASSES: Class[] = [
-  {
-    id: "cls-1",
-    academicYearId: "1446-1447",
-    name: "المستوى الأول - بنين (أ)",
-    gender: "MALE"
-  },
-  {
-    id: "cls-2",
-    academicYearId: "1446-1447",
-    name: "المستوى الأول - بنات (ب)",
-    gender: "FEMALE"
-  },
-  {
-    id: "cls-3",
-    academicYearId: "1446-1447",
-    name: "المستوى الثاني - بنين",
-    gender: "MALE"
-  }
-];
-
-const INITIAL_CLASS_SUBJECTS: ClassSubject[] = [
-  { id: "cs-1", classId: "cls-1", masterSubjectId: "ARB101", lecturerId: "19800101", status: GradeStatus.PUBLISHED },
-  { id: "cs-2", classId: "cls-1", masterSubjectId: "FIQ101", lecturerId: "19850202", status: GradeStatus.PUBLISHED },
-  { id: "cs-3", classId: "cls-1", masterSubjectId: "TAF101", lecturerId: "19920404", status: GradeStatus.PUBLISHED },
-  { id: "cs-4", classId: "cls-2", masterSubjectId: "ARB101", lecturerId: "19900303", status: GradeStatus.PUBLISHED },
-  { id: "cs-5", classId: "cls-2", masterSubjectId: "AQD101", lecturerId: "19900303", status: GradeStatus.PUBLISHED },
-  { id: "cs-6", classId: "cls-3", masterSubjectId: "USL101", lecturerId: "19850202", status: GradeStatus.DRAFT }
-];
-
-const INITIAL_ENROLLMENTS: StudentEnrollment[] = [
-  { id: "enr-1", studentId: "2024001", classId: "cls-1" },
-  { id: "enr-2", studentId: "2024002", classId: "cls-1" },
-  { id: "enr-3", studentId: "2024003", classId: "cls-1" },
-  { id: "enr-4", studentId: "2024004", classId: "cls-1" },
-  { id: "enr-5", studentId: "2024101", classId: "cls-2" },
-  { id: "enr-6", studentId: "2024102", classId: "cls-2" },
-  { id: "enr-7", studentId: "2024103", classId: "cls-2" }
-];
-
-const INITIAL_GRADES: GradeRecord[] = [
-  // Student 2024001 (Ahmad)
-  { enrollmentId: "enr-1", classSubjectId: "cs-1", sem1_uts: 18, sem1_uas: 72, sem1_input_type: "COMPONENT", sem2_uts: 19, sem2_uas: 74, sem2_input_type: "COMPONENT" },
-  { enrollmentId: "enr-1", classSubjectId: "cs-2", sem1_uts: 17, sem1_uas: 70, sem1_input_type: "COMPONENT", sem2_uts: 18, sem2_uas: 72, sem2_input_type: "COMPONENT" },
-  { enrollmentId: "enr-1", classSubjectId: "cs-3", sem1_uts: 16, sem1_uas: 68, sem1_input_type: "COMPONENT", sem2_uts: 17, sem2_uas: 70, sem2_input_type: "COMPONENT" },
-  // Student 2024002 (Omar)
-  { enrollmentId: "enr-2", classSubjectId: "cs-1", sem1_uts: 19, sem1_uas: 75, sem1_input_type: "COMPONENT", sem2_uts: 19, sem2_uas: 76, sem2_input_type: "COMPONENT" },
-  { enrollmentId: "enr-2", classSubjectId: "cs-2", sem1_uts: 18, sem1_uas: 72, sem1_input_type: "COMPONENT", sem2_uts: 18, sem2_uas: 73, sem2_input_type: "COMPONENT" },
-  { enrollmentId: "enr-2", classSubjectId: "cs-3", sem1_uts: 17, sem1_uas: 70, sem1_input_type: "COMPONENT", sem2_uts: 18, sem2_uas: 71, sem2_input_type: "COMPONENT" },
-  // Student 2024003 (Khaled)
-  { enrollmentId: "enr-3", classSubjectId: "cs-1", sem1_uts: 15, sem1_uas: 62, sem1_input_type: "COMPONENT", sem2_uts: 16, sem2_uas: 65, sem2_input_type: "COMPONENT" },
-  { enrollmentId: "enr-3", classSubjectId: "cs-2", sem1_uts: 14, sem1_uas: 60, sem1_input_type: "COMPONENT", sem2_uts: 15, sem2_uas: 63, sem2_input_type: "COMPONENT" },
-  { enrollmentId: "enr-3", classSubjectId: "cs-3", sem1_uts: 15, sem1_uas: 65, sem1_input_type: "COMPONENT", sem2_uts: 16, sem2_uas: 66, sem2_input_type: "COMPONENT" },
-  // Student 2024101 (Aisha)
-  { enrollmentId: "enr-5", classSubjectId: "cs-4", sem1_uts: 20, sem1_uas: 78, sem1_input_type: "COMPONENT", sem2_uts: 20, sem2_uas: 79, sem2_input_type: "COMPONENT" },
-  { enrollmentId: "enr-5", classSubjectId: "cs-5", sem1_uts: 19, sem1_uas: 76, sem1_input_type: "COMPONENT", sem2_uts: 19, sem2_uas: 77, sem2_input_type: "COMPONENT" },
-  // Student 2024102 (Fatima)
-  { enrollmentId: "enr-6", classSubjectId: "cs-4", sem1_uts: 18, sem1_uas: 74, sem1_input_type: "COMPONENT", sem2_uts: 19, sem2_uas: 75, sem2_input_type: "COMPONENT" },
-  { enrollmentId: "enr-6", classSubjectId: "cs-5", sem1_uts: 17, sem1_uas: 71, sem1_input_type: "COMPONENT", sem2_uts: 18, sem2_uas: 73, sem2_input_type: "COMPONENT" }
-];
-
-// --- STATE MANAGEMENT (In-memory Cache with LocalStorage Persistence) ---
+// --- STATE MANAGEMENT (Data murni dari Spreadsheet) ---
 let USERS: User[] = [];
 let ACADEMIC_YEARS: AcademicYear[] = [];
 let MASTER_SUBJECTS: MasterSubject[] = [];
@@ -266,74 +30,29 @@ let CLASSES: Class[] = [];
 let CLASS_SUBJECTS: ClassSubject[] = [];
 let ENROLLMENTS: StudentEnrollment[] = [];
 let GRADES: GradeRecord[] = [];
+let GRADE_EDIT_REQUESTS: GradeEditRequest[] = [];
 
+// Timestamp Metadata
 let localTimestamps: { [key: string]: number } = {};
 
-const loadFromLocalStorage = (): boolean => {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.DB);
-    if (!raw) return false;
-    const parsed = JSON.parse(raw);
-    if (parsed && parsed.users && Array.isArray(parsed.users) && parsed.users.length > 0) {
-      USERS = cleanUserData(parsed.users);
-      ACADEMIC_YEARS = cleanAcademicYears(parsed.academic_years || []);
-      MASTER_SUBJECTS = parsed.master_subjects || [];
-      CLASSES = cleanClasses(parsed.classes || []);
-      CLASS_SUBJECTS = cleanClassSubjects(parsed.class_subjects || []);
-      ENROLLMENTS = cleanEnrollments(parsed.student_enrollments || []);
-      GRADES = cleanGrades(parsed.grades || []);
-      return true;
-    }
-  } catch (e) {
-    console.warn("Could not read local DB:", e);
-  }
-  return false;
-};
-
-const saveToLocalStorage = () => {
-  try {
-    const payload = {
-      users: USERS,
-      academic_years: ACADEMIC_YEARS,
-      master_subjects: MASTER_SUBJECTS,
-      classes: CLASSES,
-      class_subjects: CLASS_SUBJECTS,
-      student_enrollments: ENROLLMENTS,
-      grades: GRADES,
-      updatedAt: Date.now()
-    };
-    localStorage.setItem(STORAGE_KEYS.DB, JSON.stringify(payload));
-  } catch (e) {
-    console.warn("Could not persist local DB:", e);
-  }
-};
-
-const initDefaults = () => {
-  USERS = [...INITIAL_USERS];
-  ACADEMIC_YEARS = [...INITIAL_ACADEMIC_YEARS];
-  MASTER_SUBJECTS = [...INITIAL_MASTER_SUBJECTS];
-  CLASSES = [...INITIAL_CLASSES];
-  CLASS_SUBJECTS = [...INITIAL_CLASS_SUBJECTS];
-  ENROLLMENTS = [...INITIAL_ENROLLMENTS];
-  GRADES = [...INITIAL_GRADES];
-  saveToLocalStorage();
-};
-
-// Initial load check
-if (!loadFromLocalStorage()) {
-  initDefaults();
-}
-
-export const resetToDefaultData = () => {
-  initDefaults();
-  notifyListeners();
-};
-
-// --- REALTIME SYNC ENGINE ---
+// --- REALTIME SYNC & CONCURRENCY ENGINE (Google Sheets/Docs Architecture) ---
+const SNAPSHOT_CACHE_KEY = 'STAI_SIAKAD_SNAPSHOT_V2';
 type DataListener = () => void;
 let listeners: DataListener[] = [];
-let syncInterval: any = null;
+let syncTimer: any = null;
 let isSyncing = false;
+let isSyncActive = false;
+let currentSyncRole: Role | null = null;
+let lastSyncCompletedAt = 0;
+let visibilityListenerAttached = false;
+let writeQueue: Promise<any> = Promise.resolve();
+
+export const setSyncUserRole = (role: Role | null) => {
+  currentSyncRole = role;
+  if (isSyncActive) {
+    scheduleNextSync();
+  }
+};
 
 export const subscribeToData = (listener: DataListener) => {
   listeners.push(listener);
@@ -364,256 +83,405 @@ export const normalizeGender = (val: any): 'MALE' | 'FEMALE' => {
   return 'MALE';
 };
 
+const parseRole = (val: any): Role => {
+  const s = safeString(val).toUpperCase().replace(/[\s_-]+/g, '_');
+  if (s.includes('ADMIN_PUTRI') || s.includes('ADMINPUTRI') || s.includes('PUTRI')) {
+    return Role.ADMIN_PUTRI;
+  }
+  if (s.includes('ADMIN')) {
+    return Role.ADMIN;
+  }
+  if (s.includes('LECTURER') || s.includes('DOSEN')) {
+    return Role.LECTURER;
+  }
+  return Role.STUDENT;
+};
+
+const deduplicateById = <T extends { id: string }>(items: T[]): T[] => {
+  const map = new Map<string, T>();
+  items.forEach(item => {
+    if (item && item.id) {
+      map.set(item.id, item);
+    }
+  });
+  return Array.from(map.values());
+};
+
 const cleanUserData = (raw: any[]): User[] => {
   if (!Array.isArray(raw)) return [];
-  return raw
-    .filter(u => u && (u.id || u.name))
-    .map(u => ({
-      ...u,
-      id: safeString(u.id), 
-      password: safeString(u.password),
-      name: safeString(u.name),
-      role: (safeString(u.role).toUpperCase() || Role.STUDENT) as Role, 
-      status: (safeString(u.status).toUpperCase() || UserStatus.ACTIVE) as UserStatus,
-      gender: normalizeGender(u.gender || u.Gender) 
-    }));
+  return deduplicateById(
+    raw
+      .filter(u => u && (u.id || u.name))
+      .map(u => ({
+        ...u,
+        id: safeString(u.id), 
+        password: safeString(u.password),
+        name: safeString(u.name),
+        role: parseRole(u.role), 
+        status: (safeString(u.status).toUpperCase() || UserStatus.ACTIVE) as UserStatus,
+        gender: normalizeGender(u.gender || u.Gender) 
+      }))
+  );
+};
+
+const cleanMasterSubjects = (raw: any[]): MasterSubject[] => {
+  if (!Array.isArray(raw)) return [];
+  return deduplicateById(
+    raw
+      .filter(s => s && (s.id || s.name))
+      .map(s => ({
+        id: safeString(s.id || s.name),
+        name: safeString(s.name || s.id),
+        sks: Number(s.sks) || 0
+      }))
+  );
+};
+
+const parseBoolean = (val: any): boolean => {
+  if (val === true || val === 1 || val === '1') return true;
+  if (typeof val === 'string') {
+    const s = val.trim().toUpperCase();
+    if (s === 'TRUE' || s === 'YES' || s === '1' || s === 'AKTIF' || s === 'OPEN') return true;
+  }
+  return false;
 };
 
 const cleanAcademicYears = (raw: any[]): AcademicYear[] => {
   if (!Array.isArray(raw)) return [];
-  return raw
-    .filter(y => y && y.id)
-    .map(y => ({
-      ...y,
-      id: safeString(y.id),
-      isActive: Boolean(y.isActive),
-      isSem1Active: Boolean(y.isSem1Active),
-      isSem2Active: Boolean(y.isSem2Active)
-    }));
+  return deduplicateById(
+    raw
+      .filter(y => y && y.id)
+      .map(y => ({
+        ...y,
+        id: safeString(y.id),
+        name: safeString(y.name),
+        isActive: parseBoolean(y.isActive),
+        startDate: safeString(y.startDate),
+        isSem1Active: parseBoolean(y.isSem1Active),
+        isSem2Active: parseBoolean(y.isSem2Active)
+      }))
+  );
 };
 
 const cleanClasses = (raw: any[]): Class[] => {
   if (!Array.isArray(raw)) return [];
-  return raw
-    .filter(c => c && c.id && safeString(c.id) !== '')
-    .map(c => ({
-      ...c,
-      id: safeString(c.id),
-      academicYearId: safeString(c.academicYearId),
-      name: safeString(c.name),
-      gender: normalizeGender(c.gender || c.Gender) 
-    }));
+  return deduplicateById(
+    raw
+      .filter(c => c && c.id && safeString(c.id) !== '')
+      .map(c => ({
+        ...c,
+        id: safeString(c.id),
+        academicYearId: safeString(c.academicYearId),
+        name: safeString(c.name),
+        gender: normalizeGender(c.gender || c.Gender) 
+      }))
+  );
 };
 
 const cleanClassSubjects = (raw: any[]): ClassSubject[] => {
   if (!Array.isArray(raw)) return [];
-  return raw
-    .filter(cs => cs && cs.id)
-    .map(cs => ({
-      ...cs,
-      id: safeString(cs.id),
-      classId: safeString(cs.classId),
-      masterSubjectId: safeString(cs.masterSubjectId),
-      lecturerId: safeString(cs.lecturerId),
-      status: (safeString(cs.status).toUpperCase() || GradeStatus.DRAFT) as GradeStatus
-    }));
+  return deduplicateById(
+    raw
+      .filter(cs => cs && cs.id)
+      .map(cs => ({
+        ...cs,
+        id: safeString(cs.id),
+        classId: safeString(cs.classId),
+        masterSubjectId: safeString(cs.masterSubjectId),
+        lecturerId: safeString(cs.lecturerId),
+        status: (safeString(cs.status).toUpperCase() || GradeStatus.DRAFT) as GradeStatus
+      }))
+  );
 };
 
 const cleanEnrollments = (raw: any[]): StudentEnrollment[] => {
   if (!Array.isArray(raw)) return [];
-  return raw
-    .filter(e => e && e.studentId && e.classId)
-    .map(e => ({
-      ...e,
-      id: safeString(e.id),
-      studentId: safeString(e.studentId),
-      classId: safeString(e.classId)
-    }));
+  return deduplicateById(
+    raw
+      .filter(e => e && e.studentId && e.classId)
+      .map((e, idx) => ({
+        ...e,
+        id: safeString(e.id) || `${safeString(e.classId)}_${safeString(e.studentId)}_${idx}`,
+        studentId: safeString(e.studentId),
+        classId: safeString(e.classId)
+      }))
+  );
 };
 
 const cleanGrades = (raw: any[]): GradeRecord[] => {
   if (!Array.isArray(raw)) return [];
   return raw
     .filter(g => g && g.enrollmentId)
-    .map(g => ({
-      enrollmentId: safeString(g.enrollmentId),
-      classSubjectId: safeString(g.classSubjectId),
-      sem1_uts: Number(g.sem1_uts) || 0,
-      sem1_uas: Number(g.sem1_uas) || 0,
-      sem1_input_type: (safeString(g.sem1_input_type) || 'COMPONENT') as GradeInputType,
-      sem2_uts: Number(g.sem2_uts) || 0,
-      sem2_uas: Number(g.sem2_uas) || 0,
-      sem2_input_type: (safeString(g.sem2_input_type) || 'COMPONENT') as GradeInputType,
+    .map(g => {
+      let s1Uts = Number(g.sem1_uts) || 0;
+      let s1Uas = Number(g.sem1_uas) || 0;
+      let s1Type: GradeInputType = (safeString(g.sem1_input_type).toUpperCase() === 'DIRECT') ? 'DIRECT' : 'COMPONENT';
+      let s1Sub = g.sem1_submitted === true || String(g.sem1_submitted).toUpperCase() === 'TRUE' || g.sem1_submitted === 1 || (s1Uts > 0 || s1Uas > 0);
+      let s2Uts = Number(g.sem2_uts) || 0;
+      let s2Uas = Number(g.sem2_uas) || 0;
+      let s2Type: GradeInputType = (safeString(g.sem2_input_type).toUpperCase() === 'DIRECT') ? 'DIRECT' : 'COMPONENT';
+      let s2Sub = g.sem2_submitted === true || String(g.sem2_submitted).toUpperCase() === 'TRUE' || g.sem2_submitted === 1 || (s2Uts > 0 || s2Uas > 0);
+
+      // Handle legacy shifted column layout if encountered from older spreadsheet version
+      if (typeof g.sem2_uts === 'string' && (g.sem2_uts === 'COMPONENT' || g.sem2_uts === 'DIRECT')) {
+        s1Type = g.sem2_uts as GradeInputType;
+        s1Sub = g.sem2_uas === true || String(g.sem2_uas).toUpperCase() === 'TRUE' || g.sem2_uas === 1;
+        s2Uts = Number(g['']) || 0;
+        s2Uas = Number(g.sem2_uas_real) || 0;
+        s2Type = 'COMPONENT';
+        s2Sub = Boolean(g.sem2_submitted);
+      }
+
+      return {
+        enrollmentId: safeString(g.enrollmentId),
+        classSubjectId: safeString(g.classSubjectId),
+        sem1_uts: s1Uts,
+        sem1_uas: s1Uas,
+        sem1_input_type: s1Type,
+        sem1_submitted: s1Sub,
+        sem2_uts: s2Uts,
+        sem2_uas: s2Uas,
+        sem2_input_type: s2Type,
+        sem2_submitted: s2Sub,
+      };
+    });
+};
+
+const cleanGradeEditRequests = (raw: any[]): GradeEditRequest[] => {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter(r => r && (r.id || r.classSubjectId))
+    .map(r => ({
+      id: safeString(r.id),
+      classSubjectId: safeString(r.classSubjectId),
+      lecturerId: safeString(r.lecturerId),
+      academicYearId: safeString(r.academicYearId),
+      semester: (Number(r.semester) === 2 ? 2 : 1) as 1 | 2,
+      isRemidi: Boolean(r.isRemidi) || String(r.id).includes('_REMIDI_') || String(r.semester) === 'REMIDI' || String(r.notes || '').includes('تكميلي') || String(r.notes || '').includes('Remidi'),
+      status: (safeString(r.status).toUpperCase() || 'PENDING') as EditRequestStatus,
+      requestedAt: safeString(r.requestedAt) || new Date().toISOString(),
+      respondedAt: safeString(r.respondedAt) || undefined,
+      notes: safeString(r.notes) || undefined,
     }));
 };
 
-// --- HELPER: FETCH WITH TIMEOUT AND NO CACHE ---
-const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs = 4500) => {
-  const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), timeoutMs);
-  const separator = url.includes('?') ? '&' : '?';
-  
-  try {
-    const res = await fetch(`${url}${separator}_t=${Date.now()}`, {
-      ...options,
-      signal: controller.signal,
-      redirect: 'follow'
-    });
-    clearTimeout(id);
-    return res;
-  } catch (err) {
-    clearTimeout(id);
-    throw err;
-  }
-};
+// --- RESILIENT NETWORK LAYER: AUTO-RETRY + EXPONENTIAL BACKOFF + JITTER ---
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-// --- TEST API URL ---
-export const testApiUrl = async (testUrl: string): Promise<{ success: boolean; message: string }> => {
+const saveSnapshotToLocalCache = () => {
   try {
-    const res = await fetchWithTimeout(`${testUrl}?action=GET_ENTITY&entity=academic_years`, {}, 6000);
-    if (!res.ok) {
-      return { success: false, message: `استجاب الخادم برمز خطأ HTTP ${res.status}` };
-    }
-    const contentType = res.headers.get('content-type') || '';
-    const text = await res.text();
-    if (text.includes('<!DOCTYPE') || text.includes('<html') || text.includes('accounts.google.com')) {
-      return {
-        success: false,
-        message: 'يتطلب الرابط تسجيل الدخول في حساب Google. يرجى تعديل إعدادات النشر في Apps Script وضبط "Who has access" على "Anyone".'
-      };
-    }
-    const data = JSON.parse(text);
-    if (data && typeof data === 'object') {
-      return { success: true, message: 'تم الاتصال بـ Google Sheets بنجاح واسترداد البيانات!' };
-    }
-    return { success: false, message: 'استجاب الخادم ببيانات غير صالحة.' };
-  } catch (err: any) {
-    if (err.name === 'AbortError') {
-      return { success: false, message: 'انتهت مهلة الاتصال بالخادم (Timeout).' };
-    }
-    return {
-      success: false,
-      message: 'فشل الاتصال بالرابط (TypeError: Failed to fetch). تأكد من اتصال الإنترنت وأن النشر مضبوط على Anyone.'
+    if (USERS.length === 0 && ACADEMIC_YEARS.length === 0) return;
+    const payload = {
+      users: USERS,
+      academic_years: ACADEMIC_YEARS,
+      master_subjects: MASTER_SUBJECTS,
+      classes: CLASSES,
+      class_subjects: CLASS_SUBJECTS,
+      student_enrollments: ENROLLMENTS,
+      grades: GRADES,
+      grade_edit_requests: GRADE_EDIT_REQUESTS,
+      metadata: localTimestamps,
+      savedAt: Date.now()
     };
+    localStorage.setItem(SNAPSHOT_CACHE_KEY, JSON.stringify(payload));
+  } catch (e) {
+    // Ignore storage quota errors silently
   }
 };
 
-// --- INITIAL LOAD ---
+const loadSnapshotFromLocalCache = (): boolean => {
+  try {
+    const raw = localStorage.getItem(SNAPSHOT_CACHE_KEY);
+    if (!raw) return false;
+    const data = JSON.parse(raw);
+    if (!data || typeof data !== 'object' || !Array.isArray(data.users) || data.users.length === 0) {
+      return false;
+    }
+    USERS = cleanUserData(data.users);
+    if (data.academic_years) ACADEMIC_YEARS = cleanAcademicYears(data.academic_years);
+    if (data.master_subjects) MASTER_SUBJECTS = cleanMasterSubjects(data.master_subjects);
+    if (data.classes) CLASSES = cleanClasses(data.classes);
+    if (data.class_subjects) CLASS_SUBJECTS = cleanClassSubjects(data.class_subjects);
+    if (data.student_enrollments) ENROLLMENTS = cleanEnrollments(data.student_enrollments);
+    if (data.grades) GRADES = cleanGrades(data.grades);
+    if (data.grade_edit_requests) GRADE_EDIT_REQUESTS = cleanGradeEditRequests(data.grade_edit_requests);
+    if (data.metadata) localTimestamps = data.metadata;
+    return true;
+  } catch (e) {
+    return false;
+  }
+};
+
+const applyServerRemidiData = (remidiSettingsRaw?: any[], remidiRecordsRaw?: any[]) => {
+  let changed = false;
+  if (remidiSettingsRaw && Array.isArray(remidiSettingsRaw)) {
+    remidiSettingsRaw.forEach((s: any) => {
+      if (s.academicYearId) {
+        REMIDI_SETTINGS[s.academicYearId] = {
+          academicYearId: String(s.academicYearId),
+          isInputOpen: s.isInputOpen === true || s.isInputOpen === 'TRUE' || s.isInputOpen === 'true',
+          isPublished: s.isPublished === true || s.isPublished === 'TRUE' || s.isPublished === 'true'
+        };
+        changed = true;
+      }
+    });
+  }
+  if (remidiRecordsRaw && Array.isArray(remidiRecordsRaw) && remidiRecordsRaw.length > 0) {
+    const serverMap = new Map(remidiRecordsRaw.map((r: any) => [String(r.id), r]));
+    REMIDI_RECORDS = REMIDI_RECORDS.map(localRec => {
+      const srv = serverMap.get(localRec.id);
+      if (!srv) return localRec;
+      return {
+        ...localRec,
+        isEligible: srv.isEligible === true || srv.isEligible === 'TRUE' || srv.isEligible === 'true',
+        remidiScore: srv.remidiScore !== undefined && srv.remidiScore !== '' && srv.remidiScore !== null ? Number(srv.remidiScore) : localRec.remidiScore,
+        submitted: srv.submitted === true || srv.submitted === 'TRUE' || srv.submitted === 'true' || srv.remidiScore !== undefined,
+        notes: srv.notes || localRec.notes,
+        updatedAt: srv.updatedAt || localRec.updatedAt
+      };
+    });
+    changed = true;
+  }
+  if (changed) {
+    persistRemidiState();
+  }
+};
+
+// --- HELPER: FETCH NO CACHE WITH AUTO-RETRY (ANTI-CRASH ON HIGH CONCURRENCY) ---
+const fetchNoCache = async (url: string, options: RequestInit = {}, maxRetries = 3): Promise<Response> => {
+  const separator = url.includes('?') ? '&' : '?';
+  let lastError: any = null;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const targetUrl = `${url}${separator}_t=${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      const res = await fetch(targetUrl, {
+        ...options,
+        redirect: 'follow'
+      });
+
+      // Retry automatically on rate limit (429) or temporary server overload (500, 502, 503, 504)
+      if ((res.status === 429 || res.status >= 500) && attempt < maxRetries) {
+        const backoffMs = Math.min(6000, 700 * Math.pow(2, attempt)) + Math.floor(Math.random() * 450);
+        await sleep(backoffMs);
+        continue;
+      }
+
+      return res;
+    } catch (err) {
+      lastError = err;
+      if (attempt < maxRetries) {
+        const backoffMs = Math.min(6000, 700 * Math.pow(2, attempt)) + Math.floor(Math.random() * 450);
+        await sleep(backoffMs);
+      }
+    }
+  }
+
+  throw lastError || new Error('Network request failed after retries');
+};
+
+// --- INITIAL LOAD MURNI DARI GOOGLE SHEETS (WITH LOCAL-FIRST SNAPSHOT FALLBACK) ---
 export const fetchInitialData = async (): Promise<boolean> => {
-  // Always ensure local data is loaded first
-  if (USERS.length === 0) {
-    loadFromLocalStorage();
-    if (USERS.length === 0) initDefaults();
-  }
-
-  if (offlineMode) {
-    console.log("Starting in Offline/Local Database Mode.");
-    notifyListeners();
-    return true;
-  }
-
   if (!API_URL || API_URL.includes("REPLACE_WITH")) {
-    console.warn("API URL is missing, running in local database mode.");
-    offlineMode = true;
-    notifyListeners();
-    return true;
+    console.error("API URL is missing!");
+    return false;
   }
+
+  // Hydrate from local snapshot immediately if available so memory is pre-warmed
+  const hasWarmSnapshot = loadSnapshotFromLocalCache();
 
   try {
-    console.log("Attempting to connect to Google Sheets Database...");
-    const res = await fetchWithTimeout(`${API_URL}?action=GET_ALL`, {}, 4000);
+    const res = await fetchNoCache(`${API_URL}?action=GET_ALL`, { redirect: 'follow' }, 3);
 
     if (!res.ok) {
       throw new Error(`HTTP Error ${res.status}`);
     }
 
-    const text = await res.text();
-    if (text.includes('<!DOCTYPE') || text.includes('<html') || text.includes('accounts.google.com')) {
-      throw new Error("Access permission denied: Apps Script deployment requires public 'Anyone' access.");
+    const data = await res.json();
+
+    if (!data || typeof data !== 'object' || data.success === false) {
+      throw new Error(data?.message || "Invalid JSON response from Google Sheets");
     }
 
-    const data = JSON.parse(text);
+    if (data.users) USERS = cleanUserData(data.users);
+    if (data.academic_years) ACADEMIC_YEARS = cleanAcademicYears(data.academic_years);
+    if (data.master_subjects) MASTER_SUBJECTS = cleanMasterSubjects(data.master_subjects);
+    if (data.classes) CLASSES = cleanClasses(data.classes || []);
+    if (data.class_subjects) CLASS_SUBJECTS = cleanClassSubjects(data.class_subjects || []);
+    if (data.student_enrollments) ENROLLMENTS = cleanEnrollments(data.student_enrollments || []);
+    if (data.grades) GRADES = cleanGrades(data.grades || []);
+    if (data.grade_edit_requests) GRADE_EDIT_REQUESTS = cleanGradeEditRequests(data.grade_edit_requests || []);
+    applyServerRemidiData(data.remidi_settings, data.remidi_records);
+    if (data.metadata) localTimestamps = data.metadata;
 
-    if (!data || typeof data !== 'object') {
-      throw new Error("Invalid JSON response from Google Sheets");
-    }
-
-    if (data.users && Array.isArray(data.users) && data.users.length > 0) {
-      USERS = cleanUserData(data.users);
-    }
-    if (data.academic_years && Array.isArray(data.academic_years)) {
-      ACADEMIC_YEARS = cleanAcademicYears(data.academic_years);
-    }
-    if (data.master_subjects && Array.isArray(data.master_subjects)) {
-      MASTER_SUBJECTS = data.master_subjects;
-    }
-    if (data.classes && Array.isArray(data.classes)) {
-      CLASSES = cleanClasses(data.classes);
-    }
-    if (data.class_subjects && Array.isArray(data.class_subjects)) {
-      CLASS_SUBJECTS = cleanClassSubjects(data.class_subjects);
-    }
-    if (data.student_enrollments && Array.isArray(data.student_enrollments)) {
-      ENROLLMENTS = cleanEnrollments(data.student_enrollments);
-    }
-    if (data.grades && Array.isArray(data.grades)) {
-      GRADES = cleanGrades(data.grades);
-    }
-    if (data.metadata) {
-      localTimestamps = data.metadata;
-    }
-
-    saveToLocalStorage();
-    offlineMode = false;
+    lastSyncCompletedAt = Date.now();
+    saveSnapshotToLocalCache();
     notifyListeners();
     return true;
-  } catch (e: any) {
-    console.warn("Could not sync with Google Sheets (activating resilient local database):", e.message || e);
-    // Don't crash the app! Fall back gracefully to local database
-    offlineMode = true;
-    notifyListeners();
-    return true;
+  } catch (e) {
+    console.warn("Primary GET_ALL experienced high load or network issue:", e);
+    // Zero-crash fallback: if we have a warm local snapshot, allow the user into the app seamlessly
+    // and let the background delta sync update tables quietly
+    if (hasWarmSnapshot && USERS.length > 0) {
+      notifyListeners();
+      setTimeout(() => { performSync(); }, 2000);
+      return true;
+    }
+    return false;
   }
 };
 
-// --- REALTIME SYNC ENGINE ---
+// --- SMART DELTA SYNC ENGINE (SINGLE METADATA CHECK + VISIBILITY + ADAPTIVE JITTER) ---
+const getAdaptiveSyncDelay = (): number => {
+  // Student or Login screen: 45s - 60s random interval (cuts polling traffic by >90%)
+  if (!currentSyncRole || currentSyncRole === Role.STUDENT) {
+    return 45000 + Math.floor(Math.random() * 15000);
+  }
+  // Lecturer / Admin: 16s - 23s random jitter interval (prevents synchronized herd spikes)
+  return 16000 + Math.floor(Math.random() * 7000);
+};
+
+const scheduleNextSync = () => {
+  if (syncTimer) {
+    clearTimeout(syncTimer);
+    syncTimer = null;
+  }
+  if (!isSyncActive) return;
+
+  const delay = getAdaptiveSyncDelay();
+  syncTimer = setTimeout(async () => {
+    await performSync();
+    if (isSyncActive) {
+      scheduleNextSync();
+    }
+  }, delay);
+};
+
 const performSync = async () => {
-  if (offlineMode || !API_URL || isSyncing) return;
-  
+  if (!API_URL || API_URL.includes("REPLACE_WITH") || isSyncing) return;
+
+  // Pause background polling when tab is hidden or device is offline (just like Google Docs/Sheets)
+  if (typeof document !== 'undefined' && document.hidden) return;
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+
   isSyncing = true;
   try {
-    const yearsRes = await fetchWithTimeout(`${API_URL}?action=GET_ENTITY&entity=academic_years`, {}, 3500);
-    const text = await yearsRes.text();
-    if (text.includes('<!DOCTYPE') || text.includes('<html')) return;
-    const yearsJson = JSON.parse(text);
-    
-    if (yearsJson.academic_years) {
-      const newYears = cleanAcademicYears(yearsJson.academic_years);
-      if (JSON.stringify(newYears) !== JSON.stringify(ACADEMIC_YEARS)) {
-        ACADEMIC_YEARS = newYears;
-        saveToLocalStorage();
-        notifyListeners(); 
-      }
-    }
+    // 1. Single lightweight request to check server timestamps for all tables
+    const metaRes = await fetchNoCache(`${API_URL}?action=METADATA`, {}, 1);
+    if (!metaRes.ok) return;
 
-    const metaRes = await fetchWithTimeout(`${API_URL}?action=METADATA`, {}, 3500);
-    const metaText = await metaRes.text();
-    if (metaText.includes('<!DOCTYPE') || metaText.includes('<html')) return;
-    const { metadata: serverTimestamps } = JSON.parse(metaText);
-
+    const { metadata: serverTimestamps } = await metaRes.json();
     if (!serverTimestamps) return;
 
-    const syncTable = async (key: string, localVar: any, cleaner: (d: any[]) => any[], setter: (d: any[]) => void) => {
-      if (key === 'academic_years') return false;
+    const syncTable = async (key: string, cleaner: (d: any[]) => any[], setter: (d: any[]) => void) => {
+      const serverTime = Number(serverTimestamps[key]) || 0;
+      const localTime = Number(localTimestamps[key]) || 0;
 
-      const serverTime = serverTimestamps[key] || 0;
-      const localTime = localTimestamps[key] || 0;
-      
       if (serverTime > localTime) {
-        const res = await fetchWithTimeout(`${API_URL}?action=GET_ENTITY&entity=${key}`, {}, 3500);
-        const entityText = await res.text();
-        const json = JSON.parse(entityText);
-        if (json[key]) {
+        const res = await fetchNoCache(`${API_URL}?action=GET_ENTITY&entity=${key}`, {}, 2);
+        if (!res.ok) return false;
+        const json = await res.json();
+        if (json && json[key]) {
           setter(cleaner(json[key]));
           localTimestamps[key] = serverTime;
           return true;
@@ -622,50 +490,91 @@ const performSync = async () => {
       return false;
     };
 
+    const syncRemidiTable = async (key: 'remidi_settings' | 'remidi_records') => {
+      const serverTime = Number(serverTimestamps[key]) || 0;
+      const localTime = Number(localTimestamps[key]) || 0;
+
+      if (serverTime > localTime) {
+        const res = await fetchNoCache(`${API_URL}?action=GET_ENTITY&entity=${key}`, {}, 2);
+        if (!res.ok) return false;
+        const json = await res.json();
+        if (json && json[key]) {
+          if (key === 'remidi_settings') {
+            applyServerRemidiData(json.remidi_settings, undefined);
+          } else {
+            applyServerRemidiData(undefined, json.remidi_records);
+          }
+          localTimestamps[key] = serverTime;
+          return true;
+        }
+      }
+      return false;
+    };
+
     const results = await Promise.all([
-      syncTable('users', USERS, cleanUserData, (d) => USERS = d),
-      syncTable('master_subjects', MASTER_SUBJECTS, (d) => d, (d) => MASTER_SUBJECTS = d),
-      syncTable('classes', CLASSES, cleanClasses, (d) => CLASSES = d),
-      syncTable('class_subjects', CLASS_SUBJECTS, cleanClassSubjects, (d) => CLASS_SUBJECTS = d),
-      syncTable('student_enrollments', ENROLLMENTS, cleanEnrollments, (d) => ENROLLMENTS = d),
-      syncTable('grades', GRADES, cleanGrades, (d) => GRADES = d)
+      syncTable('academic_years', cleanAcademicYears, (d) => ACADEMIC_YEARS = d),
+      syncTable('users', cleanUserData, (d) => USERS = d),
+      syncTable('master_subjects', cleanMasterSubjects, (d) => MASTER_SUBJECTS = d),
+      syncTable('classes', cleanClasses, (d) => CLASSES = d),
+      syncTable('class_subjects', cleanClassSubjects, (d) => CLASS_SUBJECTS = d),
+      syncTable('student_enrollments', cleanEnrollments, (d) => ENROLLMENTS = d),
+      syncTable('grades', cleanGrades, (d) => GRADES = d),
+      syncTable('grade_edit_requests', cleanGradeEditRequests, (d) => GRADE_EDIT_REQUESTS = d),
+      syncRemidiTable('remidi_settings'),
+      syncRemidiTable('remidi_records')
     ]);
 
+    lastSyncCompletedAt = Date.now();
+
     if (results.some(r => r === true)) {
-      saveToLocalStorage();
+      saveSnapshotToLocalCache();
       notifyListeners();
     }
   } catch (e) {
-    // silently skip sync
+    // Silent skip on background sync network blip
   } finally {
     isSyncing = false;
   }
 };
 
-export const startRealtimeSync = () => {
-  if (syncInterval) clearInterval(syncInterval);
-  syncInterval = setInterval(performSync, 8000);
+const handleVisibilityOrOnlineChange = () => {
+  if (!isSyncActive) return;
+  if (typeof document !== 'undefined' && !document.hidden) {
+    // When user returns to tab after >15s, immediately check for delta changes
+    if (Date.now() - lastSyncCompletedAt > 15000) {
+      performSync();
+    }
+    scheduleNextSync();
+  }
 };
 
-export const stopRealtimeSync = () => { 
-  if (syncInterval) clearInterval(syncInterval); 
+export const startRealtimeSync = () => {
+  isSyncActive = true;
+  if (typeof window !== 'undefined' && !visibilityListenerAttached) {
+    document.addEventListener('visibilitychange', handleVisibilityOrOnlineChange);
+    window.addEventListener('online', handleVisibilityOrOnlineChange);
+    visibilityListenerAttached = true;
+  }
+  scheduleNextSync();
+};
+
+export const stopRealtimeSync = () => {
+  isSyncActive = false;
+  if (syncTimer) {
+    clearTimeout(syncTimer);
+    syncTimer = null;
+  }
 };
 
 // --- MANUAL RELOAD FUNCTION ---
 export const reloadSpecificData = async (entities: string[]): Promise<void> => {
-  if (offlineMode || !API_URL) {
-    loadFromLocalStorage();
-    notifyListeners();
-    return;
-  }
-  
+  if (!API_URL) return;
+
   try {
     const promises = entities.map(async (entity) => {
-      const res = await fetchWithTimeout(`${API_URL}?action=GET_ENTITY&entity=${entity}`, {}, 4000);
-      const text = await res.text();
-      if (text.includes('<!DOCTYPE') || text.includes('<html')) return;
-      const json = JSON.parse(text);
-      
+      const res = await fetchNoCache(`${API_URL}?action=GET_ENTITY&entity=${entity}`, { redirect: 'follow' }, 3);
+      const json = await res.json();
+
       switch(entity) {
         case 'users': 
           if (json.users) USERS = cleanUserData(json.users); 
@@ -674,7 +583,7 @@ export const reloadSpecificData = async (entities: string[]): Promise<void> => {
           if (json.academic_years) ACADEMIC_YEARS = cleanAcademicYears(json.academic_years); 
           break;
         case 'master_subjects': 
-          if (json.master_subjects) MASTER_SUBJECTS = json.master_subjects; 
+          if (json.master_subjects) MASTER_SUBJECTS = cleanMasterSubjects(json.master_subjects); 
           break;
         case 'classes': 
           if (json.classes) CLASSES = cleanClasses(json.classes); 
@@ -688,40 +597,126 @@ export const reloadSpecificData = async (entities: string[]): Promise<void> => {
         case 'grades': 
           if (json.grades) GRADES = cleanGrades(json.grades); 
           break;
+        case 'grade_edit_requests': 
+          if (json.grade_edit_requests) GRADE_EDIT_REQUESTS = cleanGradeEditRequests(json.grade_edit_requests); 
+          break;
       }
       if (localTimestamps) localTimestamps[entity] = Date.now();
     });
 
     await Promise.all(promises);
-    saveToLocalStorage();
+    saveSnapshotToLocalCache();
     notifyListeners();
   } catch (e) {
-    console.warn("Partial reload failed over network, refreshing from local cache.");
-    loadFromLocalStorage();
-    notifyListeners();
+    console.error("Partial Reload Failed:", e);
+    throw e;
   }
 };
 
-// --- ASYNC POST DATA HELPER ---
-const postData = async (action: string, payload: any) => {
-  // Always update local storage first
-  saveToLocalStorage();
-
-  if (offlineMode || !API_URL || API_URL.includes("REPLACE_WITH")) return;
-
-  try {
-    await fetch(API_URL, {
-      method: 'POST',
-      mode: 'no-cors', 
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action, payload })
-    });
-  } catch (e) {
-    console.warn("Background POST sync skipped (offline or network error):", e);
+// --- SEQUENTIAL WRITE QUEUE + AUTO-RETRY POST HELPER (Google Sheets Lock-Friendly) ---
+const executePostWithRetry = async (action: string, payload: any, maxRetries = 4): Promise<boolean> => {
+  if (!API_URL || API_URL.includes("REPLACE_WITH")) {
+    throw new Error("URL API Spreadsheet belum dikonfigurasi.");
   }
+
+  let lastError: any = null;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const res = await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ action, payload }),
+        redirect: 'follow'
+      });
+
+      if ((res.status === 429 || res.status >= 500) && attempt < maxRetries) {
+        const waitMs = Math.min(7000, 800 * Math.pow(2, attempt)) + Math.floor(Math.random() * 500);
+        await sleep(waitMs);
+        continue;
+      }
+
+      if (!res.ok) {
+        throw new Error(`Server Spreadsheet Error (HTTP ${res.status}): ${res.statusText}`);
+      }
+
+      const json = await res.json();
+      if (json && json.success === false) {
+        const msg = String(json.message || '');
+        // If Google Apps Script LockService is momentarily busy with another user's write, wait & retry automatically
+        if ((msg.includes('sibuk') || msg.includes('Lock') || msg.includes('busy')) && attempt < maxRetries) {
+          const waitMs = Math.min(7000, 900 * Math.pow(2, attempt)) + Math.floor(Math.random() * 500);
+          await sleep(waitMs);
+          continue;
+        }
+        throw new Error(msg || `Operasi ${action} gagal di backend spreadsheet.`);
+      }
+
+      saveSnapshotToLocalCache();
+      return true;
+    } catch (e: any) {
+      lastError = e;
+      if (attempt < maxRetries) {
+        const waitMs = Math.min(7000, 800 * Math.pow(2, attempt)) + Math.floor(Math.random() * 500);
+        await sleep(waitMs);
+      }
+    }
+  }
+
+  console.error(`Post Error (${action}) after retries:`, lastError);
+  throw lastError;
 };
 
-const generateId = () => Math.random().toString(36).substr(2, 9);
+const postData = async (action: string, payload: any): Promise<boolean> => {
+  // Enqueue writes sequentially per client so rapid actions never collide
+  const task = writeQueue.then(
+    () => executePostWithRetry(action, payload),
+    () => executePostWithRetry(action, payload)
+  );
+  writeQueue = task.catch(() => {});
+  return task;
+};
+
+export const generateId = () => Math.random().toString(36).substr(2, 9);
+
+// --- STANDARDIZED ID GENERATION HELPERS ---
+export const getClassLevelCode = (className: string): string => {
+  const map: { [key: string]: string } = {
+    "التمهيدية الأولى": "T1",
+    "التمهيدية الثانية": "T2",
+    "السنة الأولى": "S1",
+    "السنة الثانية": "S2",
+    "السنة الثالثة": "S3",
+    "السنة الرابعة": "S4"
+  };
+  const trimmed = safeString(className);
+  if (map[trimmed]) return map[trimmed];
+  return trimmed.replace(/\s+/g, '_');
+};
+
+export const getGenderCode = (gender: any): 'M' | 'F' => {
+  return normalizeGender(gender) === 'FEMALE' ? 'F' : 'M';
+};
+
+export const generateClassId = (academicYearId: string, className: string, gender: any): string => {
+  const yearCode = safeString(academicYearId).replace(/[\/\\]/g, '-');
+  const levelCode = getClassLevelCode(className);
+  const genderCode = getGenderCode(gender);
+  return `${yearCode}_${levelCode}_${genderCode}`;
+};
+
+export const generateClassSubjectId = (classId: string, masterSubjectId: string): string => {
+  return `${safeString(classId)}_${safeString(masterSubjectId)}`;
+};
+
+export const generateEnrollmentId = (classId: string, studentId: string): string => {
+  return `${safeString(classId)}_${safeString(studentId)}`;
+};
+
+export const generateGradeEditRequestId = (classSubjectId: string, semester: 1 | 2, isRemidi?: boolean): string => {
+  const tag = isRemidi ? 'REMIDI' : `SEM${semester}`;
+  return `REQ_${safeString(classSubjectId)}_${tag}_${Date.now()}`;
+};
 
 // --- SERVICES IMPLEMENTATION ---
 
@@ -729,21 +724,19 @@ export const login = async (id: string, password: string): Promise<User | null> 
   const targetId = String(id).trim().toLowerCase();
   const targetPass = String(password).trim();
 
-  // Allow standard logins or admin fallback
-  const user = USERS.find(u => {
+  return USERS.find(u => {
     const uId = String(u.id).trim().toLowerCase();
     const uPass = String(u.password || '').trim();
-    return uId === targetId && (uPass === targetPass || targetPass === 'admin123' || targetPass === 'dosen123' || targetPass === 'mhs123') && u.status === UserStatus.ACTIVE;
-  });
+    const isActive = !u.status || u.status === UserStatus.ACTIVE;
 
-  return user || null;
+    return uId === targetId && uPass === targetPass && isActive;
+  }) || null;
 };
 
 export const changePassword = async (id: string, newPass: string): Promise<void> => {
   const u = USERS.find(u => u.id === id);
   if (u) { 
     u.password = newPass; 
-    saveToLocalStorage();
     notifyListeners();
     await postData('CHANGE_PASSWORD', { id, password: newPass });
   }
@@ -753,8 +746,8 @@ export const changePassword = async (id: string, newPass: string): Promise<void>
 export const getAcademicYears = async (): Promise<AcademicYear[]> => [...ACADEMIC_YEARS];
 
 export const getAdminData = async () => ({
-  students: USERS.filter(u => u.role === Role.STUDENT && u.status === UserStatus.ACTIVE),
-  lecturers: USERS.filter(u => u.role === Role.LECTURER && u.status === UserStatus.ACTIVE),
+  students: USERS.filter(u => u.role === Role.STUDENT && (!u.status || u.status === UserStatus.ACTIVE)),
+  lecturers: USERS.filter(u => u.role === Role.LECTURER && (!u.status || u.status === UserStatus.ACTIVE)),
   classes: CLASSES 
 });
 
@@ -780,21 +773,152 @@ export const getClassEnrollments = async (classId: string) => {
 // --- WRITERS ---
 
 export const saveGrades = async (newGrades: GradeRecord[]): Promise<void> => {
-  newGrades.forEach(ng => {
-    const idx = GRADES.findIndex(g => g.enrollmentId === ng.enrollmentId && g.classSubjectId === ng.classSubjectId);
-    if (idx === -1) GRADES.push(ng);
-    else GRADES[idx] = ng;
-  });
-  saveToLocalStorage();
-  notifyListeners();
+  // Direct Server Update & Reload
   await postData('SAVE_GRADES', newGrades);
+  await reloadSpecificData(['grades']);
+};
+
+// --- GRADE EDIT REQUEST FUNCTIONS ---
+export const getGradeEditRequests = async (yearId?: string): Promise<GradeEditRequest[]> => {
+  if (yearId) {
+    return GRADE_EDIT_REQUESTS.filter(r => r.academicYearId === yearId);
+  }
+  return [...GRADE_EDIT_REQUESTS];
+};
+
+export const getSubjectEditRequests = (classSubjectId: string): GradeEditRequest[] => {
+  return GRADE_EDIT_REQUESTS.filter(r => r.classSubjectId === classSubjectId);
+};
+
+export const submitGradeEditRequest = async (
+  classSubjectId: string,
+  lecturerId: string,
+  academicYearId: string,
+  semester: 1 | 2,
+  notes?: string,
+  isRemidi?: boolean
+): Promise<GradeEditRequest> => {
+  const existing = GRADE_EDIT_REQUESTS.find(r => 
+    r.classSubjectId === classSubjectId && 
+    Boolean(r.isRemidi) === Boolean(isRemidi) &&
+    (isRemidi || r.semester === semester) && 
+    r.status === 'PENDING'
+  );
+  if (existing) {
+    return existing;
+  }
+
+  const newRequest: GradeEditRequest = {
+    id: generateGradeEditRequestId(classSubjectId, semester, isRemidi),
+    classSubjectId,
+    lecturerId,
+    academicYearId,
+    semester,
+    isRemidi: Boolean(isRemidi),
+    status: 'PENDING',
+    requestedAt: new Date().toISOString(),
+    notes: notes || (isRemidi ? 'طلب إذن تعديل درجات التكميلي' : 'Permohonan edit nilai')
+  };
+
+  GRADE_EDIT_REQUESTS.unshift(newRequest);
+  notifyListeners();
+
+  await postData('SUBMIT_EDIT_REQUEST', newRequest);
+  return newRequest;
+};
+
+export const respondGradeEditRequest = async (
+  requestId: string,
+  status: 'APPROVED' | 'REJECTED' | 'COMPLETED'
+): Promise<void> => {
+  const req = GRADE_EDIT_REQUESTS.find(r => r.id === requestId);
+  if (req) {
+    req.status = status as EditRequestStatus;
+    req.respondedAt = new Date().toISOString();
+  }
+
+  // Kirim status baru ke backend Spreadsheet
+  await postData('RESPOND_EDIT_REQUEST', {
+    id: requestId,
+    status,
+    respondedAt: new Date().toISOString()
+  });
+
+  // Reload data permohonan dari backend Spreadsheet (nilai GRADES sama sekali tidak disentuh)
+  await reloadSpecificData(['grade_edit_requests']);
+};
+
+export const deleteGradeEditRequest = async (requestId: string): Promise<void> => {
+  GRADE_EDIT_REQUESTS = GRADE_EDIT_REQUESTS.filter(r => r.id !== requestId);
+  notifyListeners();
+  await postData('DELETE_GENERIC', { sheet: 'grade_edit_requests', id: requestId });
+};
+
+export const saveSubjectSemesterGrades = async (
+  classSubjectId: string,
+  semester: 1 | 2,
+  lecturerId: string,
+  newGrades: GradeRecord[]
+): Promise<void> => {
+  // Merge incoming semester grades with existing grades for the other semester from backend state (GRADES)
+  // Ini menjamin penginputan Semester 1 tidak akan menghapus nilai Semester 2 yang sudah ada, dan sebaliknya
+  const mergedRecords: GradeRecord[] = newGrades.map(ng => {
+    const existing = GRADES.find(g => g.enrollmentId === ng.enrollmentId && g.classSubjectId === ng.classSubjectId);
+    
+    if (semester === 1) {
+      return {
+        enrollmentId: ng.enrollmentId,
+        classSubjectId: ng.classSubjectId,
+        sem1_uts: Number(ng.sem1_uts) || 0,
+        sem1_uas: Number(ng.sem1_uas) || 0,
+        sem1_input_type: ng.sem1_input_type || 'COMPONENT',
+        sem1_submitted: true,
+        sem2_uts: existing ? Number(existing.sem2_uts) || 0 : 0,
+        sem2_uas: existing ? Number(existing.sem2_uas) || 0 : 0,
+        sem2_input_type: existing?.sem2_input_type || 'COMPONENT',
+        sem2_submitted: Boolean(existing?.sem2_submitted),
+      };
+    } else {
+      return {
+        enrollmentId: ng.enrollmentId,
+        classSubjectId: ng.classSubjectId,
+        sem1_uts: existing ? Number(existing.sem1_uts) || 0 : 0,
+        sem1_uas: existing ? Number(existing.sem1_uas) || 0 : 0,
+        sem1_input_type: existing?.sem1_input_type || 'COMPONENT',
+        sem1_submitted: Boolean(existing?.sem1_submitted),
+        sem2_uts: Number(ng.sem2_uts) || 0,
+        sem2_uas: Number(ng.sem2_uas) || 0,
+        sem2_input_type: ng.sem2_input_type || 'COMPONENT',
+        sem2_submitted: true,
+      };
+    }
+  });
+
+  // 1. Post langsung ke backend Google Apps Script dan tunggu hingga sukses tersimpan di Google Sheets
+  await postData('SAVE_GRADES', mergedRecords);
+
+  // 2. Jika ada permohonan edit aktif yang APPROVED untuk semester ini, update ke COMPLETED
+  const activeReq = GRADE_EDIT_REQUESTS.find(r => 
+    r.classSubjectId === classSubjectId && 
+    r.semester === semester && 
+    r.status === 'APPROVED'
+  );
+  if (activeReq) {
+    try {
+      await respondGradeEditRequest(activeReq.id, 'COMPLETED' as any);
+    } catch (e) {
+      console.warn("Could not mark edit request completed:", e);
+    }
+  }
+
+  // 3. Ambil kembali data terbaru murni dari backend Google Sheets (Single Source of Truth)
+  await reloadSpecificData(['grades', 'grade_edit_requests']);
 };
 
 export const updateSubjectStatus = async (classSubjectId: string, status: GradeStatus) => {
   const sub = CLASS_SUBJECTS.find(s => s.id === classSubjectId);
   if (sub) {
     sub.status = status;
-    saveToLocalStorage();
     notifyListeners();
     await postData('UPDATE_STATUS', { id: classSubjectId, status });
   }
@@ -802,31 +926,88 @@ export const updateSubjectStatus = async (classSubjectId: string, status: GradeS
 
 export const publishClassGrades = async (classId: string) => {
   const subjects = CLASS_SUBJECTS.filter(cs => cs.classId === classId);
+  const subjectIds = subjects.map(s => s.id);
+  if (subjectIds.length === 0) return;
+
   subjects.forEach(s => s.status = GradeStatus.PUBLISHED);
-  saveToLocalStorage();
   notifyListeners();
-  subjects.forEach(s => postData('UPDATE_STATUS', { id: s.id, status: GradeStatus.PUBLISHED }));
+
+  try {
+    await postData('BULK_UPDATE_STATUS', { ids: subjectIds, status: GradeStatus.PUBLISHED });
+  } catch (err) {
+    for (const id of subjectIds) {
+      await postData('UPDATE_STATUS', { id, status: GradeStatus.PUBLISHED });
+    }
+  }
 };
 
 export const publishAllGradesInYear = async (yearId: string) => {
   const classesInYear = CLASSES.filter(c => c.academicYearId === yearId).map(c => c.id);
   const subjects = CLASS_SUBJECTS.filter(cs => classesInYear.includes(cs.classId));
+  const subjectIds = subjects.map(s => s.id);
+  
   subjects.forEach(s => s.status = GradeStatus.PUBLISHED);
-  saveToLocalStorage();
   notifyListeners();
-  subjects.forEach(s => postData('UPDATE_STATUS', { id: s.id, status: GradeStatus.PUBLISHED }));
+  
+  try {
+    await postData('BULK_UPDATE_STATUS', { ids: subjectIds, status: GradeStatus.PUBLISHED });
+  } catch (err) {
+    console.warn("BULK_UPDATE_STATUS not available, updating individually:", err);
+    for (const id of subjectIds) {
+      try {
+        await postData('UPDATE_STATUS', { id, status: GradeStatus.PUBLISHED });
+      } catch (e) {
+        break;
+      }
+    }
+  }
+  await reloadSpecificData(['class_subjects']);
+};
+
+export const unpublishAllGradesInYear = async (yearId: string) => {
+  const classesInYear = CLASSES.filter(c => c.academicYearId === yearId).map(c => c.id);
+  const subjects = CLASS_SUBJECTS.filter(cs => classesInYear.includes(cs.classId));
+  const subjectIds = subjects.map(s => s.id);
+
+  subjects.forEach(s => s.status = GradeStatus.DRAFT);
+  notifyListeners();
+
+  try {
+    await postData('BULK_UPDATE_STATUS', { ids: subjectIds, status: GradeStatus.DRAFT });
+  } catch (err) {
+    console.warn("BULK_UPDATE_STATUS not available, updating individually:", err);
+    for (const id of subjectIds) {
+      try {
+        await postData('UPDATE_STATUS', { id, status: GradeStatus.DRAFT });
+      } catch (e) {
+        break;
+      }
+    }
+  }
+  await reloadSpecificData(['class_subjects']);
 };
 
 export const bulkCreateUsers = async (newUsers: User[]): Promise<void> => {
   USERS.push(...newUsers);
-  saveToLocalStorage();
   notifyListeners();
   await postData('BULK_CREATE_USERS', newUsers);
 };
 
+export const updateUser = async (user: User): Promise<void> => {
+  const index = USERS.findIndex(u => u.id === user.id);
+  if (index !== -1) {
+    USERS[index] = {
+      ...USERS[index],
+      ...user,
+      gender: normalizeGender(user.gender)
+    };
+    notifyListeners();
+    await postData('UPDATE_USER', USERS[index]);
+  }
+};
+
 export const bulkCreateMasterSubjects = async (newSubjects: MasterSubject[]): Promise<void> => {
   MASTER_SUBJECTS.push(...newSubjects);
-  saveToLocalStorage();
   notifyListeners();
   await postData('CREATE_GENERIC', { 
     sheet: 'master_subjects', 
@@ -834,19 +1015,31 @@ export const bulkCreateMasterSubjects = async (newSubjects: MasterSubject[]): Pr
   });
 };
 
+export const updateMasterSubject = async (subject: MasterSubject): Promise<void> => {
+  const index = MASTER_SUBJECTS.findIndex(s => s.id === subject.id);
+  if (index !== -1) {
+    MASTER_SUBJECTS[index] = {
+      ...MASTER_SUBJECTS[index],
+      ...subject,
+      sks: Number(subject.sks) || 0
+    };
+    notifyListeners();
+    await postData('UPDATE_MASTER_SUBJECT', MASTER_SUBJECTS[index]);
+  }
+};
+
 export const createClass = async (name: string, yearId: string, gender: 'MALE' | 'FEMALE') => {
+  const safeGender = normalizeGender(gender);
   const existing = CLASSES.find(c => 
     c.academicYearId === yearId && 
     c.name === name && 
-    normalizeGender(c.gender) === gender
+    normalizeGender(c.gender) === safeGender
   );
   if (existing) return existing;
 
-  const id = generateId();
-  const safeGender = gender || 'MALE';
+  const id = generateClassId(yearId, name, safeGender);
   const newClass: Class = { id, name, academicYearId: yearId, gender: safeGender };
   CLASSES.push(newClass);
-  saveToLocalStorage();
   notifyListeners();
   
   await postData('CREATE_GENERIC', { 
@@ -857,18 +1050,18 @@ export const createClass = async (name: string, yearId: string, gender: 'MALE' |
 };
 
 export const createSubjectAssignment = async (masterSubjectId: string, lecturerId: string, classId: string) => {
-  const exists = CLASS_SUBJECTS.find(cs => cs.classId === classId && cs.masterSubjectId === masterSubjectId);
-  if (exists) throw new Error("المقرر مسند بالفعل لهذا الفصل");
+  const newId = generateClassSubjectId(classId, masterSubjectId);
+  const exists = CLASS_SUBJECTS.find(cs => cs.id === newId || (cs.classId === classId && cs.masterSubjectId === masterSubjectId));
+  if (exists) throw new Error("Subject already assigned to this class");
 
   const newSub: ClassSubject = {
-    id: generateId(),
+    id: newId,
     masterSubjectId,
     lecturerId,
     classId,
     status: GradeStatus.DRAFT
   };
   CLASS_SUBJECTS.push(newSub);
-  saveToLocalStorage();
   notifyListeners();
 
   await postData('CREATE_GENERIC', { 
@@ -882,10 +1075,11 @@ export const bulkCreateSubjectAssignments = async (assignments: {masterSubjectId
 
   const validAssignments: ClassSubject[] = [];
   for (const a of assignments) {
-    const exists = CLASS_SUBJECTS.find(cs => cs.classId === a.classId && cs.masterSubjectId === a.masterSubjectId);
+    const id = generateClassSubjectId(a.classId, a.masterSubjectId);
+    const exists = CLASS_SUBJECTS.find(cs => cs.id === id || (cs.classId === a.classId && cs.masterSubjectId === a.masterSubjectId));
     if (!exists) {
       validAssignments.push({
-        id: generateId(),
+        id,
         masterSubjectId: a.masterSubjectId,
         lecturerId: a.lecturerId,
         classId: a.classId,
@@ -897,12 +1091,11 @@ export const bulkCreateSubjectAssignments = async (assignments: {masterSubjectId
   if (validAssignments.length === 0) return;
 
   CLASS_SUBJECTS.push(...validAssignments);
-  saveToLocalStorage();
   notifyListeners();
 
-  await postData('CREATE_GENERIC', {
-    sheet: 'class_subjects',
-    data: validAssignments
+  await postData('CREATE_GENERIC', { 
+    sheet: 'class_subjects', 
+    data: validAssignments 
   });
 };
 
@@ -914,7 +1107,7 @@ export const bulkAssignStudentsToClass = async (studentIds: string[], classId: s
   if (studentIds.length === 0) return;
 
   const targetClass = CLASSES.find(c => c.id === classId);
-  if (!targetClass) throw new Error("الفصل غير موجود");
+  if (!targetClass) throw new Error("Class not found");
   const yearId = targetClass.academicYearId;
   const yearClassIds = CLASSES.filter(c => c.academicYearId === yearId).map(c => c.id);
 
@@ -924,7 +1117,7 @@ export const bulkAssignStudentsToClass = async (studentIds: string[], classId: s
     const existing = ENROLLMENTS.find(e => e.studentId === sId && yearClassIds.includes(e.classId));
     if (!existing) {
       newEnrollments.push({
-        id: generateId(),
+        id: generateEnrollmentId(classId, sId),
         studentId: sId,
         classId: classId
       });
@@ -934,18 +1127,16 @@ export const bulkAssignStudentsToClass = async (studentIds: string[], classId: s
   if (newEnrollments.length === 0) return;
 
   ENROLLMENTS.push(...newEnrollments);
-  saveToLocalStorage();
   notifyListeners();
 
-  await postData('CREATE_GENERIC', {
-    sheet: 'student_enrollments',
-    data: newEnrollments
+  await postData('CREATE_GENERIC', { 
+    sheet: 'student_enrollments', 
+    data: newEnrollments 
   });
 };
 
 export const removeSubjectAssignment = async (id: string) => {
   CLASS_SUBJECTS = CLASS_SUBJECTS.filter(cs => cs.id !== id);
-  saveToLocalStorage();
   notifyListeners();
   await postData('DELETE_GENERIC', { sheet: 'class_subjects', id });
 };
@@ -954,7 +1145,6 @@ export const removeStudentFromClass = async (studentId: string, classId: string)
   const target = ENROLLMENTS.find(e => e.studentId === studentId && e.classId === classId);
   if (target) {
     ENROLLMENTS = ENROLLMENTS.filter(e => e.id !== target.id);
-    saveToLocalStorage();
     notifyListeners();
     await postData('DELETE_GENERIC', { sheet: 'student_enrollments', id: target.id });
   }
@@ -965,13 +1155,13 @@ export const toggleSemesterStatus = async (yearId: string, sem: 1|2, val: boolea
   if (y) {
     if (sem === 1) y.isSem1Active = val;
     else y.isSem2Active = val;
-    saveToLocalStorage();
     notifyListeners();
     await postData('UPDATE_YEAR_STATUS', { id: yearId, sem, val });
+    await reloadSpecificData(['academic_years']);
   }
 };
 
-// --- VIEW HELPERS ---
+// --- JOIN HELPERS ---
 const joinClassSubject = (cs: ClassSubject): SubjectView => {
   const master = MASTER_SUBJECTS.find(m => m.id === cs.masterSubjectId);
   const cls = CLASSES.find(c => c.id === cs.classId);
@@ -1005,20 +1195,25 @@ export const getClassStudents = async (classSubjectId: string): Promise<{ studen
     if (!student) return null;
 
     let grade = GRADES.find(g => g.enrollmentId === enr.id && g.classSubjectId === classSubjectId);
+
     if (!grade) {
       grade = {
         enrollmentId: enr.id,
         classSubjectId: classSubjectId,
-        sem1_uts: 0, sem1_uas: 0,
+        sem1_uts: 0, 
+        sem1_uas: 0,
         sem1_input_type: 'COMPONENT',
-        sem2_uts: 0, sem2_uas: 0,
+        sem1_submitted: false,
+        sem2_uts: 0, 
+        sem2_uas: 0,
         sem2_input_type: 'COMPONENT',
+        sem2_submitted: false,
       };
     } else {
       if (!grade.sem1_input_type) grade.sem1_input_type = 'COMPONENT';
       if (!grade.sem2_input_type) grade.sem2_input_type = 'COMPONENT';
     }
-    return { student, grade };
+    return { student, grade: { ...grade } };
   }).filter(x => x !== null) as { student: User, grade: GradeRecord }[];
 };
 
@@ -1026,6 +1221,8 @@ export const getStudentGrades = async (studentId: string, yearId: string): Promi
   const yearClassIds = CLASSES.filter(c => c.academicYearId === yearId).map(c => c.id);
   const myEnrollments = ENROLLMENTS.filter(e => e.studentId === studentId && yearClassIds.includes(e.classId));
   const results: StudentGradeView[] = [];
+  const remidiSettings = getRemidiSettings(yearId);
+  const isRemidiPublished = Boolean(remidiSettings.isPublished);
 
   for (const enr of myEnrollments) {
     const classSubjects = CLASS_SUBJECTS.filter(cs => cs.classId === enr.classId);
@@ -1034,8 +1231,21 @@ export const getStudentGrades = async (studentId: string, yearId: string): Promi
       const lecturer = USERS.find(u => u.id === cs.lecturerId);
       const grade = GRADES.find(g => g.enrollmentId === enr.id && g.classSubjectId === cs.id);
       
-      const s1 = grade ? grade.sem1_uts + grade.sem1_uas : 0;
-      const s2 = grade ? grade.sem2_uts + grade.sem2_uas : 0;
+      let s1 = grade ? grade.sem1_uts + grade.sem1_uas : 0;
+      let s2 = grade ? grade.sem2_uts + grade.sem2_uas : 0;
+
+      // Jika remidi sudah dipublish oleh Admin:
+      // Mahasiswa yang remidi dan nilainya >= 60 akan mendapatkan nilai 60. Jika < 60 maka nilainya tidak berubah.
+      if (isRemidiPublished) {
+        const rem1 = REMIDI_RECORDS.find(r => r.academicYearId === yearId && r.classSubjectId === cs.id && r.studentId === studentId && r.semester === 1 && r.isEligible && r.remidiScore !== undefined);
+        if (rem1 && rem1.remidiScore !== undefined) {
+          s1 = rem1.remidiScore >= 60 ? 60 : rem1.remidiScore;
+        }
+        const rem2 = REMIDI_RECORDS.find(r => r.academicYearId === yearId && r.classSubjectId === cs.id && r.studentId === studentId && r.semester === 2 && r.isEligible && r.remidiScore !== undefined);
+        if (rem2 && rem2.remidiScore !== undefined) {
+          s2 = rem2.remidiScore >= 60 ? 60 : rem2.remidiScore;
+        }
+      }
 
       results.push({
         subjectName: master ? master.name : 'Unknown',
@@ -1062,14 +1272,27 @@ export const getAllStudentGrades = async (studentId: string): Promise<StudentGra
     const yearId = cls ? cls.academicYearId : '';
     const yearName = ACADEMIC_YEARS.find(y => y.id === yearId)?.name;
     const classSubjects = CLASS_SUBJECTS.filter(cs => cs.classId === enr.classId);
+    const remidiSettings = getRemidiSettings(yearId);
+    const isRemidiPublished = Boolean(remidiSettings.isPublished);
     
     for (const cs of classSubjects) {
       const master = MASTER_SUBJECTS.find(m => m.id === cs.masterSubjectId);
       const lecturer = USERS.find(u => u.id === cs.lecturerId);
       const grade = GRADES.find(g => g.enrollmentId === enr.id && g.classSubjectId === cs.id);
       
-      const s1 = grade ? grade.sem1_uts + grade.sem1_uas : 0;
-      const s2 = grade ? grade.sem2_uts + grade.sem2_uas : 0;
+      let s1 = grade ? grade.sem1_uts + grade.sem1_uas : 0;
+      let s2 = grade ? grade.sem2_uts + grade.sem2_uas : 0;
+
+      if (isRemidiPublished) {
+        const rem1 = REMIDI_RECORDS.find(r => r.academicYearId === yearId && r.classSubjectId === cs.id && r.studentId === studentId && r.semester === 1 && r.isEligible && r.remidiScore !== undefined);
+        if (rem1 && rem1.remidiScore !== undefined) {
+          s1 = rem1.remidiScore >= 60 ? 60 : rem1.remidiScore;
+        }
+        const rem2 = REMIDI_RECORDS.find(r => r.academicYearId === yearId && r.classSubjectId === cs.id && r.studentId === studentId && r.semester === 2 && r.isEligible && r.remidiScore !== undefined);
+        if (rem2 && rem2.remidiScore !== undefined) {
+          s2 = rem2.remidiScore >= 60 ? 60 : rem2.remidiScore;
+        }
+      }
 
       results.push({
         subjectName: master ? master.name : 'Unknown',
@@ -1096,7 +1319,9 @@ export const getClassRecap = async (classId: string): Promise<{ subjects: Master
   classSubjects.forEach(cs => {
     const m = MASTER_SUBJECTS.find(x => x.id === cs.masterSubjectId);
     if (m) {
-      masterSubjects.push(m);
+      if (!masterSubjects.some(x => x.id === m.id)) {
+        masterSubjects.push(m);
+      }
       csToMaster.set(cs.id, m.id);
     }
   });
@@ -1128,113 +1353,532 @@ export const getClassRecap = async (classId: string): Promise<{ subjects: Master
   return { subjects: masterSubjects, rows };
 };
 
-// --- CLIENT-SIDE VALID PDF GENERATION FALLBACK ---
-const buildClientSidePdfBase64 = (student: User, grades: StudentGradeView[], yearName: string, type: string): string => {
-  const safeText = (s: string) => s.replace(/[\(\)\\]/g, '');
-  const title = "STAI IMAM SYAFII - KARTU HASIL STUDI (KHS)";
-  const studentInfo = `Student: ${safeText(student.name)}  |  NIM: ${safeText(student.id)}  |  Year: ${safeText(yearName || 'All')}`;
-  
-  const lines: string[] = [
-    `Report Type: ${type}`,
-    "--------------------------------------------------------------------------------",
-    "Code      Subject Name                         SKS   Sem1  Sem2  Final",
-    "--------------------------------------------------------------------------------"
-  ];
-
-  let totalSks = 0;
-  let totalScore = 0;
-
-  grades.forEach((g) => {
-    const code = (g.subjectCode || '').padEnd(10, ' ').slice(0, 10);
-    const name = safeText(g.subjectName || '').padEnd(35, ' ').slice(0, 35);
-    const sksStr = String(g.sks).padStart(3, ' ');
-    const s1Str = String(g.sem1_total).padStart(5, ' ');
-    const s2Str = String(g.sem2_total).padStart(5, ' ');
-    const finStr = String(g.final_average.toFixed(1)).padStart(6, ' ');
-    lines.push(`${code} ${name} ${sksStr} ${s1Str} ${s2Str} ${finStr}`);
-    totalSks += g.sks;
-    totalScore += g.final_average;
-  });
-
-  const avgScore = grades.length > 0 ? (totalScore / grades.length).toFixed(2) : "0.00";
-  lines.push("--------------------------------------------------------------------------------");
-  lines.push(`Total SKS: ${totalSks}   |   Overall Average: ${avgScore}`);
-  lines.push("");
-  lines.push(`Generated: ${new Date().toLocaleDateString('ar-SA')} - SIAKAD STAI Imam Syafii`);
-
-  // Stream content
-  let contentStream = `BT /F1 14 Tf 40 790 Td (${title}) Tj ET\n`;
-  contentStream += `BT /F1 10 Tf 40 765 Td (${studentInfo}) Tj ET\n`;
-  
-  lines.forEach((l, idx) => {
-    const y = 730 - (idx * 16);
-    if (y > 40) {
-      contentStream += `BT /F1 9 Tf 40 ${y} Td (${l}) Tj ET\n`;
-    }
-  });
-
-  const streamLen = contentStream.length;
-  const obj1 = "1 0 obj\n<</Type /Catalog /Pages 2 0 R>>\nendobj\n";
-  const obj2 = "2 0 obj\n<</Type /Pages /Kids [3 0 R] /Count 1>>\nendobj\n";
-  const obj3 = "3 0 obj\n<</Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources <</Font <</F1 4 0 R>>>> /Contents 5 0 R>>\nendobj\n";
-  const obj4 = "4 0 obj\n<</Type /Font /Subtype /Type1 /BaseFont /Courier>>\nendobj\n";
-  const obj5 = `5 0 obj\n<</Length ${streamLen}>>\nstream\n${contentStream}\nendstream\nendobj\n`;
-  
-  const header = "%PDF-1.4\n";
-  const offset1 = header.length;
-  const offset2 = offset1 + obj1.length;
-  const offset3 = offset2 + obj2.length;
-  const offset4 = offset3 + obj3.length;
-  const offset5 = offset4 + obj4.length;
-  const xrefOffset = offset5 + obj5.length;
-  
-  const xref = `xref\n0 6\n0000000000 65535 f \n${String(offset1).padStart(10, '0')} 00000 n \n${String(offset2).padStart(10, '0')} 00000 n \n${String(offset3).padStart(10, '0')} 00000 n \n${String(offset4).padStart(10, '0')} 00000 n \n${String(offset5).padStart(10, '0')} 00000 n \n`;
-  const trailer = `trailer\n<</Size 6 /Root 1 0 R>>\nstartxref\n${xrefOffset}\n%%EOF`;
-  
-  const pdfString = header + obj1 + obj2 + obj3 + obj4 + obj5 + xref + trailer;
-  
-  // Safe base64 encoding in browser
-  return btoa(unescape(encodeURIComponent(pdfString)));
-};
-
 // --- PDF GENERATION ---
 export const generatePdf = async (studentId: string, type: 'DEFAULT' | 'SEM1' | 'SEM2' | 'YEARLY' = 'DEFAULT', yearId?: string): Promise<{ base64: string, filename: string }> => {
-  const student = USERS.find(u => u.id === studentId) || { id: studentId, name: 'Student', role: Role.STUDENT, gender: 'MALE', status: UserStatus.ACTIVE };
-  const currentYear = ACADEMIC_YEARS.find(y => y.id === yearId);
-  const yearName = currentYear ? currentYear.name : '';
-  const filename = `KHS_${student.id}_${type}_${Date.now()}.pdf`;
+  if (!API_URL || API_URL.includes("REPLACE_WITH")) throw new Error("API URL not configured");
+  
+  const params = new URLSearchParams({
+    action: 'GENERATE_PDF',
+    studentId: studentId,
+    pdfType: type
+  });
 
-  // If online, try remote GAS
-  if (!offlineMode && API_URL && !API_URL.includes("REPLACE_WITH")) {
-    try {
-      const params = new URLSearchParams({
-        action: 'GENERATE_PDF',
-        studentId: studentId,
-        pdfType: type
-      });
-      if (yearId) params.append('yearId', yearId);
+  if (yearId) {
+    params.append('yearId', yearId);
+  }
 
-      const res = await fetchWithTimeout(`${API_URL}?${params.toString()}`, {
-        method: 'GET',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' }
-      }, 5000);
+  let res;
+  try {
+    res = await fetchNoCache(`${API_URL}?${params.toString()}`, {
+      method: 'GET',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' }
+    });
+  } catch (e) {
+    throw new Error("Gagal terhubung ke server (Network Error). Periksa koneksi internet.");
+  }
+  
+  if (!res.ok) {
+    throw new Error(`HTTP Error: ${res.status} ${res.statusText}`);
+  }
+  
+  let json;
+  try {
+    json = await res.json();
+  } catch (e) {
+    throw new Error("Server mengembalikan respons yang tidak valid.");
+  }
 
-      if (res.ok) {
-        const text = await res.text();
-        if (!text.includes('<!DOCTYPE') && !text.includes('<html')) {
-          const json = JSON.parse(text);
-          if (json.success !== false && json.base64) {
-            return { base64: json.base64, filename: json.filename || filename };
-          }
-        }
+  if (json.success === false) {
+    throw new Error(json.message || "Gagal membuat PDF di server.");
+  }
+  
+  return { base64: json.base64, filename: json.filename };
+};
+
+// ============================================================================
+// REMIDI / TAKMILI (التكميلي / الإعادة) SERVICE ENGINE
+// ============================================================================
+const REMIDI_STORAGE_KEY = 'STAI_REMIDI_RECORDS_V3';
+const REMIDI_SETTINGS_KEY = 'STAI_REMIDI_SETTINGS_V3';
+
+let REMIDI_RECORDS: RemidiRecord[] = [];
+let REMIDI_SETTINGS: { [yearId: string]: RemidiSettings } = {};
+
+// Load persistent data from localStorage
+try {
+  const savedRecords = localStorage.getItem(REMIDI_STORAGE_KEY);
+  if (savedRecords) {
+    REMIDI_RECORDS = JSON.parse(savedRecords);
+  }
+  const savedSettings = localStorage.getItem(REMIDI_SETTINGS_KEY);
+  if (savedSettings) {
+    REMIDI_SETTINGS = JSON.parse(savedSettings);
+  }
+} catch (e) {
+  console.warn("Could not load remidi cache:", e);
+}
+
+const persistRemidiState = () => {
+  try {
+    const meaningfulRecords = REMIDI_RECORDS.filter(r => r.isEligible || r.remidiScore !== undefined || r.notes);
+    localStorage.setItem(REMIDI_STORAGE_KEY, JSON.stringify(meaningfulRecords));
+    localStorage.setItem(REMIDI_SETTINGS_KEY, JSON.stringify(REMIDI_SETTINGS));
+  } catch (e) {
+    console.warn("Could not save remidi cache:", e);
+  }
+};
+
+/**
+ * Mendapatkan konfigurasi remidi untuk tahun akademik tertentu
+ */
+export const getRemidiSettings = (yearId: string): RemidiSettings => {
+  if (!yearId) {
+    return { academicYearId: '', isInputOpen: false, isPublished: false };
+  }
+  if (!REMIDI_SETTINGS[yearId]) {
+    REMIDI_SETTINGS[yearId] = {
+      academicYearId: yearId,
+      isInputOpen: false,
+      isPublished: false,
+    };
+  }
+  return REMIDI_SETTINGS[yearId];
+};
+
+/**
+ * Buka atau tutup akses input nilai remidi bagi dosen
+ */
+export const toggleRemidiInputStatus = async (yearId: string, isOpen: boolean): Promise<void> => {
+  const s = getRemidiSettings(yearId);
+  s.isInputOpen = isOpen;
+  persistRemidiState();
+  notifyListeners();
+  try {
+    await postData('SAVE_REMIDI_SETTINGS', s);
+  } catch (err) {
+    console.warn("Could not save remidi settings to backend:", err);
+  }
+};
+
+/**
+ * Publish atau tutup publikasi nilai remidi ke mahasiswa
+ */
+export const toggleRemidiPublishStatus = async (yearId: string, isPublished: boolean): Promise<void> => {
+  const s = getRemidiSettings(yearId);
+  s.isPublished = isPublished;
+  persistRemidiState();
+  notifyListeners();
+  try {
+    await postData('SAVE_REMIDI_SETTINGS', s);
+  } catch (err) {
+    console.warn("Could not save remidi settings to backend:", err);
+  }
+};
+
+/**
+ * Sinkronisasi otomatis kandidat remidi dari daftar nilai yang < 60
+ * Dioptimalkan dengan O(1) Hash Map & validasi nilai terisi
+ */
+export const syncAndGetRemidiCandidates = (
+  yearId: string, 
+  semesterFilter: 'SEM1' | 'SEM2' | 'BOTH' = 'BOTH'
+): RemidiRecord[] => {
+  if (!yearId) return [];
+
+  const classesInYear = CLASSES.filter(c => c.academicYearId === yearId);
+  const classIds = new Set(classesInYear.map(c => c.id));
+  const enrollmentsInYear = ENROLLMENTS.filter(e => classIds.has(e.classId));
+  const classSubjectsInYear = CLASS_SUBJECTS.filter(cs => classIds.has(cs.classId));
+
+  // Build high-performance lookup maps O(1)
+  const classMap = new Map(classesInYear.map(c => [c.id, c]));
+  const userMap = new Map(USERS.map(u => [u.id, u]));
+  const masterSubMap = new Map(MASTER_SUBJECTS.map(m => [m.id, m]));
+  const existingRecordMap = new Map(REMIDI_RECORDS.map(r => [r.id, r]));
+
+  // Index GRADES by enrollmentId_classSubjectId for instant O(1) lookup
+  const gradeMap = new Map<string, GradeRecord>();
+  GRADES.forEach(g => {
+    gradeMap.set(`${g.enrollmentId}_${g.classSubjectId}`, g);
+  });
+
+  // Group class subjects by classId
+  const classSubjectsByClassId = new Map<string, ClassSubject[]>();
+  classSubjectsInYear.forEach(cs => {
+    const list = classSubjectsByClassId.get(cs.classId) || [];
+    list.push(cs);
+    classSubjectsByClassId.set(cs.classId, list);
+  });
+
+  const generatedRecords: RemidiRecord[] = [];
+
+  enrollmentsInYear.forEach(enr => {
+    const student = userMap.get(enr.studentId);
+    if (!student) return;
+    const cls = classMap.get(enr.classId);
+    if (!cls) return;
+
+    const subjectsInThisClass = classSubjectsByClassId.get(enr.classId) || [];
+
+    subjectsInThisClass.forEach(cs => {
+      const mSub = masterSubMap.get(cs.masterSubjectId);
+      const lecturer = userMap.get(cs.lecturerId);
+      const grade = gradeMap.get(`${enr.id}_${cs.id}`);
+
+      const sem1Score = (Number(grade?.sem1_uts) || 0) + (Number(grade?.sem1_uas) || 0);
+      const sem2Score = (Number(grade?.sem2_uts) || 0) + (Number(grade?.sem2_uas) || 0);
+
+      const subjectName = mSub?.name || 'مقرر دراسي';
+      const subjectCode = mSub?.id || cs.masterSubjectId;
+      const lecturerName = lecturer?.name || 'المحاضر';
+
+      // Semester 1 Check (< 60)
+      // Hanya masukkan jika nilainya sudah disubmit/diinput atau sudah ada record remidi sebelumnya
+      const id1 = `REM_${yearId}_${cs.id}_${enr.studentId}_1`;
+      const prev1 = existingRecordMap.get(id1);
+      const hasSem1Grading = Boolean(grade?.sem1_submitted) || Number(grade?.sem1_uts) > 0 || Number(grade?.sem1_uas) > 0;
+
+      if ((hasSem1Grading && sem1Score < 60) || (prev1 && (prev1.isEligible || prev1.remidiScore !== undefined))) {
+        const record1: RemidiRecord = {
+          id: id1,
+          academicYearId: yearId,
+          classId: cls.id,
+          className: cls.name,
+          classSubjectId: cs.id,
+          subjectName,
+          subjectCode,
+          studentId: student.id,
+          studentName: student.name,
+          gender: normalizeGender(student.gender),
+          lecturerId: cs.lecturerId,
+          lecturerName,
+          semester: 1,
+          initialScore: sem1Score,
+          remidiScore: prev1?.remidiScore,
+          submitted: prev1 ? (prev1.submitted !== undefined ? prev1.submitted : prev1.remidiScore !== undefined) : false,
+          isEligible: prev1 ? prev1.isEligible : false,
+          notes: prev1?.notes,
+          updatedAt: prev1?.updatedAt
+        };
+        generatedRecords.push(record1);
+        existingRecordMap.set(id1, record1);
       }
-    } catch (e) {
-      console.warn("Remote PDF generation skipped, using client fallback:", e);
+
+      // Semester 2 Check (< 60)
+      // Hanya masukkan jika nilainya sudah disubmit/diinput atau sudah ada record remidi sebelumnya
+      const id2 = `REM_${yearId}_${cs.id}_${enr.studentId}_2`;
+      const prev2 = existingRecordMap.get(id2);
+      const hasSem2Grading = Boolean(grade?.sem2_submitted) || Number(grade?.sem2_uts) > 0 || Number(grade?.sem2_uas) > 0;
+
+      if ((hasSem2Grading && sem2Score < 60) || (prev2 && (prev2.isEligible || prev2.remidiScore !== undefined))) {
+        const record2: RemidiRecord = {
+          id: id2,
+          academicYearId: yearId,
+          classId: cls.id,
+          className: cls.name,
+          classSubjectId: cs.id,
+          subjectName,
+          subjectCode,
+          studentId: student.id,
+          studentName: student.name,
+          gender: normalizeGender(student.gender),
+          lecturerId: cs.lecturerId,
+          lecturerName,
+          semester: 2,
+          initialScore: sem2Score,
+          remidiScore: prev2?.remidiScore,
+          submitted: prev2 ? (prev2.submitted !== undefined ? prev2.submitted : prev2.remidiScore !== undefined) : false,
+          isEligible: prev2 ? prev2.isEligible : false,
+          notes: prev2?.notes,
+          updatedAt: prev2?.updatedAt
+        };
+        generatedRecords.push(record2);
+        existingRecordMap.set(id2, record2);
+      }
+    });
+  });
+
+  // Preserve records and persist
+  REMIDI_RECORDS = Array.from(existingRecordMap.values());
+  persistRemidiState();
+
+  // Filter based on requested semester
+  return generatedRecords.filter(r => {
+    if (r.academicYearId !== yearId) return false;
+    if (semesterFilter === 'SEM1') return r.semester === 1;
+    if (semesterFilter === 'SEM2') return r.semester === 2;
+    return true; // BOTH
+  });
+};
+
+/**
+ * Toggle persetujuan/seleksi hak ikut remidi bagi mahasiswa (per record)
+ */
+export const toggleRemidiEligibility = async (recordId: string, isEligible: boolean): Promise<void> => {
+  const target = REMIDI_RECORDS.find(r => r.id === recordId);
+  if (target) {
+    target.isEligible = isEligible;
+    target.updatedAt = new Date().toISOString();
+    persistRemidiState();
+    notifyListeners();
+    try {
+      await postData('SAVE_REMIDI_RECORDS', [target]);
+    } catch (err) {
+      console.warn("Could not save remidi eligibility to backend:", err);
+    }
+  }
+};
+
+/**
+ * Seleksi masal (Pilih Semua / Batal Semua)
+ */
+export const bulkSetRemidiEligibility = async (recordIds: string[], isEligible: boolean): Promise<void> => {
+  const idSet = new Set(recordIds);
+  const updatedList: RemidiRecord[] = [];
+  REMIDI_RECORDS.forEach(r => {
+    if (idSet.has(r.id)) {
+      r.isEligible = isEligible;
+      r.updatedAt = new Date().toISOString();
+      updatedList.push(r);
+    }
+  });
+  persistRemidiState();
+  notifyListeners();
+  if (updatedList.length > 0) {
+    try {
+      await postData('SAVE_REMIDI_RECORDS', updatedList);
+    } catch (err) {
+      console.warn("Could not bulk save remidi eligibility to backend:", err);
+    }
+  }
+};
+
+/**
+ * Update nilai remidi (bisa dipanggil oleh Dosen atau Admin)
+ */
+export const saveRemidiScore = async (recordId: string, remidiScore: number, notes?: string): Promise<void> => {
+  const target = REMIDI_RECORDS.find(r => r.id === recordId);
+  if (target) {
+    target.remidiScore = Math.max(0, Math.min(100, remidiScore));
+    if (notes !== undefined) target.notes = notes;
+    target.updatedAt = new Date().toISOString();
+    persistRemidiState();
+    notifyListeners();
+    try {
+      await postData('SAVE_REMIDI_RECORDS', [target]);
+    } catch (err) {
+      console.warn("Could not save remidi score to backend:", err);
+    }
+  }
+};
+
+/**
+ * Simpan nilai remidi secara borongan (Bulk Save oleh Dosen)
+ */
+export const bulkSaveRemidiScores = async (
+  scores: Array<{ recordId: string; remidiScore: number; notes?: string }>,
+  classSubjectId?: string
+): Promise<void> => {
+  const map = new Map(scores.map(s => [s.recordId, s]));
+  const updatedList: RemidiRecord[] = [];
+  REMIDI_RECORDS.forEach(r => {
+    const update = map.get(r.id);
+    if (update) {
+      r.remidiScore = Math.max(0, Math.min(100, update.remidiScore));
+      r.submitted = true; // Kunci setelah disimpan
+      if (update.notes !== undefined) r.notes = update.notes;
+      r.updatedAt = new Date().toISOString();
+      updatedList.push(r);
+    }
+  });
+  persistRemidiState();
+  notifyListeners();
+  if (updatedList.length > 0) {
+    try {
+      await postData('SAVE_REMIDI_RECORDS', updatedList);
+    } catch (err) {
+      console.warn("Could not bulk save remidi scores to backend:", err);
     }
   }
 
-  // Client-side fallback
-  const grades = yearId ? await getStudentGrades(studentId, yearId) : await getAllStudentGrades(studentId);
-  const base64 = buildClientSidePdfBase64(student, grades, yearName, type);
-  return { base64, filename };
+  // Jika ada permohonan edit remidi aktif yang APPROVED untuk mata kuliah ini, tandai COMPLETED
+  const targetCsId = classSubjectId || (updatedList.length > 0 ? updatedList[0].classSubjectId : undefined);
+  if (targetCsId) {
+    const activeReq = GRADE_EDIT_REQUESTS.find(r => 
+      r.classSubjectId === targetCsId && 
+      Boolean(r.isRemidi) && 
+      r.status === 'APPROVED'
+    );
+    if (activeReq) {
+      try {
+        await respondGradeEditRequest(activeReq.id, 'COMPLETED');
+      } catch (e) {
+        console.warn("Could not mark remidi edit request completed:", e);
+      }
+    }
+  }
+};
+
+/**
+ * Mengambil daftar mahasiswa remidi yang disetujui untuk diisi oleh Dosen tertentu
+ */
+export const getLecturerRemidiRecords = (
+  lecturerId: string, 
+  yearId: string, 
+  classSubjectId?: string
+): RemidiRecord[] => {
+  // Sync first to ensure fresh data
+  syncAndGetRemidiCandidates(yearId, 'BOTH');
+
+  return REMIDI_RECORDS.filter(r => {
+    if (r.academicYearId !== yearId) return false;
+    if (r.lecturerId !== lecturerId) return false;
+    if (!r.isEligible) return false; // Hanya yang sudah disetujui Admin
+    if (classSubjectId && r.classSubjectId !== classSubjectId) return false;
+    return true;
+  });
+};
+
+/**
+ * Mengambil data remidi mahasiswa
+ */
+export const getStudentRemidiData = (
+  studentId: string, 
+  yearId: string
+): { 
+  hasFailingGrades: boolean;
+  eligibleRecords: RemidiRecord[];
+  allRecords: RemidiRecord[];
+  isPublished: boolean;
+} => {
+  // Sync first
+  const candidates = syncAndGetRemidiCandidates(yearId, 'BOTH');
+  const settings = getRemidiSettings(yearId);
+  const isPublished = Boolean(settings.isPublished);
+
+  // Aturan resmi:
+  // Jika sudah di-publish admin:
+  // - Nilai remidi yang diinput dosen jika >= 60 akan tampil sebagai 60 di halaman mahasiswa.
+  // - Jika kurang dari 60, nilainya tidak berubah dan dianggap tidak lulus.
+  const attachStudentDisplayScore = (r: RemidiRecord): RemidiRecord => {
+    let studentDisplayScore: number | undefined = undefined;
+    if (isPublished && r.remidiScore !== undefined) {
+      studentDisplayScore = r.remidiScore >= 60 ? 60 : r.remidiScore;
+    }
+    return {
+      ...r,
+      studentDisplayScore
+    };
+  };
+
+  const studentRecords = candidates.filter(r => r.studentId === studentId).map(attachStudentDisplayScore);
+  const eligibleRecords = studentRecords.filter(r => r.isEligible);
+
+  return {
+    hasFailingGrades: studentRecords.length > 0,
+    eligibleRecords,
+    allRecords: studentRecords,
+    isPublished
+  };
+};
+
+/**
+ * Mengambil data rekap nilai khusus remidi (Role Admin).
+ * Ketentuannya sama dengan rekap nilai reguler, namun nilai yang ditampilkan di sini
+ * adalah NILAI MURNI yang diinput oleh dosen/admin (remidiScore), BUKAN nilai 60 yang dibatasi untuk mahasiswa,
+ * karena institusi membutuhkan rekap arsip nilai ujian remidi sebenarnya (misal dapat 85, 90, 100).
+ */
+export const getClassRemidiRecap = async (
+  classId: string,
+  yearId: string
+): Promise<{ subjects: MasterSubject[], rows: ClassRemidiRecapRow[] }> => {
+  const enrollments = ENROLLMENTS.filter(e => e.classId === classId);
+  const classSubjects = CLASS_SUBJECTS.filter(cs => cs.classId === classId);
+  const masterSubjects: MasterSubject[] = [];
+  const csToMaster = new Map<string, string>();
+
+  classSubjects.forEach(cs => {
+    const m = MASTER_SUBJECTS.find(x => x.id === cs.masterSubjectId);
+    if (m) {
+      if (!masterSubjects.some(x => x.id === m.id)) {
+        masterSubjects.push(m);
+      }
+      csToMaster.set(cs.id, m.id);
+    }
+  });
+
+  // Sinkronisasi data remidi tahun ini
+  syncAndGetRemidiCandidates(yearId, 'BOTH');
+  const remidiMap = new Map<string, RemidiRecord>();
+  REMIDI_RECORDS.forEach(r => {
+    if (r.academicYearId === yearId && r.classId === classId) {
+      remidiMap.set(`${r.classSubjectId}_${r.studentId}_${r.semester}`, r);
+    }
+  });
+
+  const rows = enrollments.map(enr => {
+    const student = USERS.find(u => u.id === enr.studentId);
+    if (!student) return null;
+
+    const row: ClassRemidiRecapRow = {
+      student,
+      grades: {},
+      totalScore: 0,
+      finalAverage: 0,
+      hasRemidi: false,
+      remidiDetails: {}
+    };
+
+    let sum = 0, count = 0;
+
+    classSubjects.forEach(cs => {
+      const masterId = csToMaster.get(cs.id);
+      if (!masterId) return;
+
+      const g = GRADES.find(x => x.enrollmentId === enr.id && x.classSubjectId === cs.id);
+      const sem1Raw = g ? (Number(g.sem1_uts) || 0) + (Number(g.sem1_uas) || 0) : 0;
+      const sem2Raw = g ? (Number(g.sem2_uts) || 0) + (Number(g.sem2_uas) || 0) : 0;
+
+      // Cari record remidi
+      const rem1 = remidiMap.get(`${cs.id}_${enr.studentId}_1`);
+      const rem2 = remidiMap.get(`${cs.id}_${enr.studentId}_2`);
+
+      const hasRem1 = Boolean(rem1 && rem1.isEligible && rem1.remidiScore !== undefined);
+      const hasRem2 = Boolean(rem2 && rem2.isEligible && rem2.remidiScore !== undefined);
+
+      if (hasRem1 || hasRem2) {
+        row.hasRemidi = true;
+      }
+
+      // NILAI MURNI / ASLI YANG DIINPUT OLEH DOSEN/ADMIN:
+      const effectiveSem1 = hasRem1 ? Number(rem1!.remidiScore) : sem1Raw;
+      const effectiveSem2 = hasRem2 ? Number(rem2!.remidiScore) : sem2Raw;
+      const effectiveAvg = (effectiveSem1 + effectiveSem2) / 2;
+
+      row.grades[masterId] = {
+        sem1: effectiveSem1,
+        sem2: effectiveSem2,
+        avg: effectiveAvg
+      };
+
+      row.remidiDetails[masterId] = {
+        isRemidiSem1: hasRem1,
+        initialSem1: rem1?.initialScore,
+        pureRemidiSem1: rem1?.remidiScore,
+        isRemidiSem2: hasRem2,
+        initialSem2: rem2?.initialScore,
+        pureRemidiSem2: rem2?.remidiScore
+      };
+
+      sum += effectiveAvg;
+      count++;
+    });
+
+    row.totalScore = sum;
+    row.finalAverage = count > 0 ? sum / count : 0;
+    return row;
+  }).filter(r => r !== null) as ClassRemidiRecapRow[];
+
+  rows.sort((a, b) => a.student.name.localeCompare(b.student.name));
+  return { subjects: masterSubjects, rows };
 };

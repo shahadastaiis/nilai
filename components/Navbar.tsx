@@ -15,6 +15,7 @@ const Navbar: React.FC<NavbarProps> = ({ user, onLogout, onChangePassword, logoU
       case Role.LECTURER: return 'عضو هيئة التدريس';
       case Role.STUDENT: return 'طالب';
       case Role.ADMIN: return 'مدير النظام';
+      case Role.ADMIN_PUTRI: return 'مديرة قسم البنات';
       default: return '';
     }
   };
@@ -29,8 +30,8 @@ const Navbar: React.FC<NavbarProps> = ({ user, onLogout, onChangePassword, logoU
                 <img src={logoUrl} alt="Logo" className="w-full h-full object-contain" />
             </div>
             <div>
-              <h1 className="text-xl font-bold leading-tight font-tajawal">نظام المعلومات الأكاديمي</h1>
-              <p className="text-xs text-emerald-200 opacity-90 font-light">STAI Imam Syafi'i</p>
+              <h1 className="text-xl font-bold leading-tight font-tajawal">النظام الأكاديمي</h1>
+              <p className="text-xs text-emerald-200 opacity-90 font-light">جامعة الإمام الشافعي الإسلامية</p>
             </div>
           </div>
           

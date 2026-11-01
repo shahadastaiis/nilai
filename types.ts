@@ -4,7 +4,8 @@ import React from 'react';
 export enum Role {
   STUDENT = 'STUDENT',
   LECTURER = 'LECTURER',
-  ADMIN = 'ADMIN'
+  ADMIN = 'ADMIN',
+  ADMIN_PUTRI = 'ADMIN_PUTRI'
 }
 
 export enum GradeStatus {
@@ -96,15 +97,32 @@ export interface SubjectView {
 
 export type GradeInputType = 'COMPONENT' | 'DIRECT';
 
+export type EditRequestStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'COMPLETED';
+
+export interface GradeEditRequest {
+  id: string;
+  classSubjectId: string;
+  lecturerId: string;
+  academicYearId: string;
+  semester: 1 | 2;
+  isRemidi?: boolean; // Permohonan edit khusus nilai remidi
+  status: EditRequestStatus;
+  requestedAt: string;
+  respondedAt?: string;
+  notes?: string;
+}
+
 export interface GradeRecord {
   enrollmentId: string; // Links Student to Class
   classSubjectId: string; // Links Subject to Class
   sem1_uts: number; // Max 20
   sem1_uas: number; // Max 80
   sem1_input_type?: GradeInputType; // Method used for Sem 1
+  sem1_submitted?: boolean; // True once lecturer has saved initial grades
   sem2_uts: number; // Max 20
   sem2_uas: number; // Max 80
   sem2_input_type?: GradeInputType; // Method used for Sem 2
+  sem2_submitted?: boolean; // True once lecturer has saved initial grades
 }
 
 export interface StudentGradeView {
@@ -131,4 +149,48 @@ export interface ClassRecapRow {
   grades: { [subjectId: string]: GradeDetail };
   totalScore: number;
   finalAverage: number;
+}
+
+export interface ClassRemidiRecapRow extends ClassRecapRow {
+  hasRemidi: boolean;
+  remidiDetails: {
+    [subjectId: string]: {
+      isRemidiSem1?: boolean;
+      initialSem1?: number;
+      pureRemidiSem1?: number;
+      isRemidiSem2?: boolean;
+      initialSem2?: number;
+      pureRemidiSem2?: number;
+    };
+  };
+}
+
+// --- REMIDI / TAKMILI MODULE TYPES ---
+export interface RemidiRecord {
+  id: string; // Composite key, e.g. REM_{yearId}_{classSubjectId}_{studentId}_{sem}
+  academicYearId: string;
+  classId: string;
+  className: string;
+  classSubjectId: string;
+  subjectName: string;
+  subjectCode: string;
+  studentId: string;
+  studentName: string;
+  gender: 'MALE' | 'FEMALE';
+  lecturerId: string;
+  lecturerName: string;
+  semester: 1 | 2;
+  initialScore: number; // Nilai merah (< 60)
+  remidiScore?: number; // Nilai ujian remidi (0 - 100)
+  studentDisplayScore?: number; // Nilai yang tampil di mahasiswa (maksimal 60 jika lulus)
+  isEligible: boolean; // Dicentang / disetujui Admin untuk ikut remidi
+  submitted?: boolean; // True jika nilai remidi sudah disimpan / dikunci oleh dosen
+  notes?: string;
+  updatedAt?: string;
+}
+
+export interface RemidiSettings {
+  academicYearId: string;
+  isInputOpen: boolean; // Akses buka-tutup bagi dosen untuk menginput nilai remidi
+  isPublished: boolean; // Publikasi nilai remidi ke mahasiswa
 }

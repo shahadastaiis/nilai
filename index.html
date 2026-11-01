@@ -4,10 +4,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>STAI Imam Syafi'i SIAKAD</title>
-    <meta name="description" content="Academic Information System with full Arabic RTL interface for STAI Imam Syafi'i." />
-    <meta property="og:title" content="STAI Imam Syafi'i SIAKAD" />
-    <meta property="og:description" content="Academic Information System with full Arabic RTL interface for STAI Imam Syafi'i." />
+    <title>النظام الأكاديمي | جامعة الإمام الشافعي</title>
+    <meta name="description" content="البوابة الأكاديمية الإلكترونية لجامعة الإمام الشافعي" />
+    <meta property="og:title" content="النظام الأكاديمي | جامعة الإمام الشافعي" />
+    <meta property="og:description" content="البوابة الأكاديمية الإلكترونية لجامعة الإمام الشافعي" />
     
     <!-- Tailwind via CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -15,7 +15,7 @@
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     
     <!-- SweetAlert2 CSS -->
     <link href="https://cdn.jsdelivr.net/npm/@sweetalert2/theme-material-ui/material-ui.min.css" rel="stylesheet">
@@ -27,7 +27,12 @@
       }
       body {
         font-family: 'Tajawal', sans-serif;
-        background-color: #FAFAFA;
+        background-color: #F8FAFC;
+        font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+      }
+      .font-mono, .tabular-nums {
+        font-family: 'IBM Plex Mono', monospace;
+        font-variant-numeric: tabular-nums;
       }
       
       /* Minimalist scrollbar */
