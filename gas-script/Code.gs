@@ -10,9 +10,13 @@
   4. Penyelarasan format 10 kolom pada sheet 'grades' & dukungan UPDATE_USER.
 */
 
-// --- KONFIGURASI TEMPLATE GOOGLE DOCS ---
+// --- KONFIGURASI TEMPLATE GOOGLE DOCS (MAHASISWA) ---
 const TEMPLATE_ID_SINGLE = '1nBufIVZdzTzuRHwFCjYzJN3bJwZHt_BBdaXdTWIDYfY'; 
 const TEMPLATE_ID_YEARLY = '1Fw8zsjFev6fdsfH6u-W1VFBY9c2WGg9JGau0jrnSywE'; 
+
+// --- KONFIGURASI TEMPLATE GOOGLE DOCS (DOSEN) ---
+const TEMPLATE_ID_LECTURER_SINGLE = '1hGMJQxaJr_3JbZpuD4u3rjsXPJs9OVLAubDq9oNc7KA';
+const TEMPLATE_ID_LECTURER_YEARLY = '1fKv2IWZMrucobbdZQdCUmsBhSxSl4R_-woihmhPY1l0';
 
 // --- KONFIGURASI RAM CACHE (Google CacheService) ---
 const CACHE_TTL_SECONDS = 300; // 5 menit di RAM (otomatis di-reset instan saat ada perubahan POST)
@@ -77,6 +81,10 @@ function doGet(e) {
       const type = params.pdfType || 'DEFAULT';
       const yearId = params.yearId || '';
       return handleGeneratePdfRouter(params.studentId, type, yearId);
+    } else if (action === 'GENERATE_LECTURER_PDF') {
+      const pdfType = params.pdfType || (Number(params.semester) === 2 ? 'SEM2' : 'SEM1');
+      const yearId = params.yearId || '';
+      return handleGenerateLecturerPdfRouter(params.classSubjectId, pdfType, yearId);
     }
     
     return jsonResponse({ success: false, message: "Invalid Action" });
@@ -689,14 +697,21 @@ function handleGeneratePdfRouter(studentId, pdfType, yearId) {
   const classSubjects = getSheetData(ss, 'class_subjects');
   const masterSubjects = getSheetData(ss, 'master_subjects');
   const grades = getSheetData(ss, 'grades');
+  const remidiSettings = getSheetData(ss, 'remidi_settings');
+  const remidiRecords = getSheetData(ss, 'remidi_records');
 
   const student = users.find(u => String(u.id).trim().toLowerCase() === String(studentId).trim().toLowerCase());
   if (!student) return jsonResponse({ success: false, message: "Mahasiswa tidak ditemukan" });
 
   let enrollment = null;
   if (yearId) {
-    const classIdsInYear = classes.filter(c => String(c.academicYearId).trim() === String(yearId).trim()).map(c => String(c.id).trim());
-    enrollment = enrollments.find(e => String(e.studentId).trim().toLowerCase() === String(studentId).trim().toLowerCase() && classIdsInYear.includes(String(e.classId).trim()));
+    const classIdsInYear = classes
+      .filter(c => String(c.academicYearId).trim() === String(yearId).trim())
+      .map(c => String(c.id).trim());
+    enrollment = enrollments.find(e =>
+      String(e.studentId).trim().toLowerCase() === String(studentId).trim().toLowerCase() &&
+      classIdsInYear.includes(String(e.classId).trim())
+    );
   } else {
     enrollment = enrollments.find(e => String(e.studentId).trim().toLowerCase() === String(studentId).trim().toLowerCase());
   }
@@ -704,29 +719,130 @@ function handleGeneratePdfRouter(studentId, pdfType, yearId) {
   if (!enrollment) return jsonResponse({ success: false, message: "Data pendaftaran kelas mahasiswa tidak ditemukan" });
 
   const cls = classes.find(c => String(c.id).trim() === String(enrollment.classId).trim());
-  const year = years.find(y => String(y.id).trim() === String(cls?.academicYearId).trim());
+  const year = findAcademicYear(years, cls, yearId);
+  const activeYearId = year ? String(year.id).trim() : String(yearId || '').trim();
+
+  const yearRemidiSetting = remidiSettings.find(rs => String(rs.academicYearId).trim() === activeYearId);
+  const isRemidiPublished = Boolean(
+    yearRemidiSetting &&
+    (yearRemidiSetting.isPublished === true || String(yearRemidiSetting.isPublished).toLowerCase() === 'true')
+  );
 
   if (pdfType === 'YEARLY') {
-    return generateYearlyPdf(student, cls, year, enrollment, classSubjects, masterSubjects, grades);
+    return generateYearlyPdf(student, cls, year, enrollment, classSubjects, masterSubjects, grades, isRemidiPublished, remidiRecords);
   } else {
     const sem = pdfType === 'SEM2' ? 2 : 1;
-    return generateSingleSemesterPdf(student, cls, year, enrollment, classSubjects, masterSubjects, grades, sem);
+    return generateSingleSemesterPdf(student, cls, year, enrollment, classSubjects, masterSubjects, grades, sem, isRemidiPublished, remidiRecords);
   }
 }
 
-function generateSingleSemesterPdf(student, cls, year, enrollment, classSubjects, masterSubjects, grades, semester) {
+function findAcademicYear(years, cls, yearIdParam) {
+  if (!Array.isArray(years) || years.length === 0) return null;
+  const clsYearId = cls && cls.academicYearId !== undefined ? String(cls.academicYearId).trim() : '';
+  const paramYearId = yearIdParam !== undefined && yearIdParam !== null ? String(yearIdParam).trim() : '';
+
+  let year = null;
+  if (clsYearId) {
+    year = years.find(y => String(y.id).trim() === clsYearId || String(y.name).trim() === clsYearId);
+  }
+  if (!year && paramYearId) {
+    year = years.find(y => String(y.id).trim() === paramYearId || String(y.name).trim() === paramYearId);
+  }
+  if (!year) {
+    year = years.find(y => y.isActive === true || String(y.isActive).toLowerCase() === 'true');
+  }
+  if (!year) {
+    year = years[years.length - 1];
+  }
+  return year;
+}
+
+function resolveSemesterScoreWithRemidi(studentId, yearId, classSubjectId, semester, rawScore, isRemidiPublished, remidiRecords) {
+  if (!isRemidiPublished || !Array.isArray(remidiRecords)) return rawScore;
+  const rec = remidiRecords.find(function(r) {
+    const isElig = r.isEligible === true || String(r.isEligible).toLowerCase() === 'true';
+    const hasScore = r.remidiScore !== undefined && r.remidiScore !== null && String(r.remidiScore).trim() !== '';
+    return String(r.academicYearId).trim() === String(yearId).trim() &&
+           String(r.classSubjectId).trim() === String(classSubjectId).trim() &&
+           String(r.studentId).trim().toLowerCase() === String(studentId).trim().toLowerCase() &&
+           Number(r.semester) === Number(semester) &&
+           isElig &&
+           hasScore;
+  });
+  if (rec) {
+    const rScore = Number(rec.remidiScore);
+    if (!isNaN(rScore)) {
+      return rScore >= 60 ? 60 : rScore;
+    }
+  }
+  return rawScore;
+}
+
+function formatArabicDate(dateObj) {
+  const monthsArabic = [
+    'يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
+    'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'
+  ];
+  const d = dateObj || new Date();
+  const day = Utilities.formatDate(d, 'Asia/Jakarta', 'd');
+  const monthIdx = Number(Utilities.formatDate(d, 'Asia/Jakarta', 'M')) - 1;
+  const year = Utilities.formatDate(d, 'Asia/Jakarta', 'yyyy');
+  return day + ' ' + (monthsArabic[monthIdx] || '') + ' ' + year + ' م';
+}
+
+function replaceDocumentPlaceholders(doc, replacements) {
+  const body = doc.getBody();
+  const header = doc.getHeader();
+  const footer = doc.getFooter();
+
+  Object.keys(replacements).forEach(function(placeholder) {
+    const val = String(replacements[placeholder] !== undefined && replacements[placeholder] !== null ? replacements[placeholder] : '');
+    const rawKey = String(placeholder).replace(/[{}]/g, '').trim();
+    const rtlSafePattern = '[{}]+\\s*' + rawKey + '\\s*[{}]+';
+
+    body.replaceText(placeholder, val);
+    body.replaceText(rtlSafePattern, val);
+    if (header) {
+      header.replaceText(placeholder, val);
+      header.replaceText(rtlSafePattern, val);
+    }
+    if (footer) {
+      footer.replaceText(placeholder, val);
+      footer.replaceText(rtlSafePattern, val);
+    }
+  });
+}
+
+function appendFormattedRow(table, cellValues) {
+  const row = table.appendTableRow();
+  for (let i = 0; i < cellValues.length; i++) {
+    const cell = row.appendTableCell(String(cellValues[i]));
+    cell.setVerticalAlignment(DocumentApp.VerticalAlignment.CENTER);
+    cell.setPaddingTop(3);
+    cell.setPaddingBottom(3);
+    cell.setPaddingLeft(5);
+    cell.setPaddingRight(5);
+
+    if (cell.getNumChildren() > 0) {
+      const para = cell.getChild(0).asParagraph();
+      para.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+      para.setSpacingBefore(0);
+      para.setSpacingAfter(0);
+      para.setLineSpacing(1.0);
+    }
+  }
+  return row;
+}
+
+// Gambar 1: KHS Semester 1 atau Semester 2 (3 Kolom: الرقم | أسماء المواد | الدرجة)
+function generateSingleSemesterPdf(student, cls, year, enrollment, classSubjects, masterSubjects, grades, semester, isRemidiPublished, remidiRecords) {
   const templateId = TEMPLATE_ID_SINGLE;
-  const copyFile = DriveApp.getFileById(templateId).makeCopy('Temp_KHS_' + student.id);
+  const copyFile = DriveApp.getFileById(templateId).makeCopy('Temp_KHS_Sem' + semester + '_' + student.id);
   const doc = DocumentApp.openById(copyFile.getId());
   const body = doc.getBody();
 
   const judulPeriode = (semester === 1) ? 'الفصل الدراسي الأول' : 'الفصل الدراسي الثاني';
-
-  body.replaceText('{{NAMA_MAHASISWA}}', student.name || '');
-  body.replaceText('{{NIM}}', student.id || '');
-  body.replaceText('{{KELAS}}', cls ? cls.name : '');
-  body.replaceText('{{TAHUN_AJARAN}}', year ? year.name : '');
-  body.replaceText('{{JUDUL_PERIODE}}', judulPeriode);
+  const activeYearId = year ? String(year.id).trim() : '';
 
   const relevantClassSubjects = classSubjects.filter(cs => String(cs.classId).trim() === String(cls.id).trim());
   const table = body.getTables()[0];
@@ -736,30 +852,54 @@ function generateSingleSemesterPdf(student, cls, year, enrollment, classSubjects
 
   relevantClassSubjects.forEach(function(cs, idx) {
     const master = masterSubjects.find(m => String(m.id).trim() === String(cs.masterSubjectId).trim());
-    const g = grades.find(x => String(x.enrollmentId).trim() === String(enrollment.id).trim() && String(x.classSubjectId).trim() === String(cs.id).trim());
+    const g = grades.find(x =>
+      String(x.enrollmentId).trim() === String(enrollment.id).trim() &&
+      String(x.classSubjectId).trim() === String(cs.id).trim()
+    );
     
     let uts = 0, uas = 0;
     if (g) {
       uts = semester === 1 ? (Number(g.sem1_uts) || 0) : (Number(g.sem2_uts) || 0);
       uas = semester === 1 ? (Number(g.sem1_uas) || 0) : (Number(g.sem2_uas) || 0);
     }
-    const total = uts + uas;
-    totalScore += total;
+    const rawTotal = uts + uas;
+    const finalSemScore = resolveSemesterScoreWithRemidi(
+      student.id, activeYearId, cs.id, semester, rawTotal, isRemidiPublished, remidiRecords
+    );
+
+    totalScore += finalSemScore;
     count++;
 
-    const row = table.appendTableRow();
-    row.appendTableCell(String(idx + 1));
-    row.appendTableCell(master ? master.name : cs.masterSubjectId);
-    row.appendTableCell(String(uts));
-    row.appendTableCell(String(uas));
-    row.appendTableCell(String(total));
-    row.appendTableCell(getPredicateArabic(total));
+    const subjectName = master ? master.name : cs.masterSubjectId;
+    // Sesuai Gambar 1 (3 kolom RTL):
+    // Kolom 0: الرقم (Nomor)
+    // Kolom 1: أسماء المواد (Nama Mata Kuliah)
+    // Kolom 2: الدرجة (Nilai Semester)
+    appendFormattedRow(table, [
+      String(idx + 1),
+      String(subjectName || ''),
+      String(finalSemScore)
+    ]);
   });
 
   const avg = count > 0 ? (totalScore / count) : 0;
-  body.replaceText('{{TOTAL_NILAI}}', String(totalScore));
-  body.replaceText('{{RATA_RATA}}', avg.toFixed(2));
-  body.replaceText('{{STATUS_KELULUSAN}}', avg >= 60 ? 'ناجح' : 'راسب');
+  const formattedGpa = avg.toFixed(2);
+  const tanggalArab = formatArabicDate(new Date());
+
+  replaceDocumentPlaceholders(doc, {
+    '{{JUDUL_PERIODE}}': judulPeriode,
+    '{{NAMA}}': student.name || '',
+    '{{NAMA_MAHASISWA}}': student.name || '',
+    '{{NIM}}': student.id || '',
+    '{{KELAS}}': cls ? cls.name : '',
+    '{{TAHUN_AJARAN}}': year ? year.name : '',
+    '{{TAHUN_AKADEMIK}}': year ? year.name : '',
+    '{{GPA}}': formattedGpa,
+    '{{RATA_RATA}}': formattedGpa,
+    '{{TOTAL_NILAI}}': String(totalScore),
+    '{{TANGGAL}}': tanggalArab,
+    '{{STATUS_KELULUSAN}}': avg >= 60 ? 'ناجح' : 'راسب'
+  });
 
   doc.saveAndClose();
 
@@ -774,18 +914,14 @@ function generateSingleSemesterPdf(student, cls, year, enrollment, classSubjects
   });
 }
 
-function generateYearlyPdf(student, cls, year, enrollment, classSubjects, masterSubjects, grades) {
+// Gambar 2: KHS Gabungan 2 Semester / Tahunan (5 Kolom: الرقم | أسماء المواد | ف(1) | ف(2) | المعدل)
+function generateYearlyPdf(student, cls, year, enrollment, classSubjects, masterSubjects, grades, isRemidiPublished, remidiRecords) {
   const templateId = TEMPLATE_ID_YEARLY;
   const copyFile = DriveApp.getFileById(templateId).makeCopy('Temp_KHS_Yearly_' + student.id);
   const doc = DocumentApp.openById(copyFile.getId());
   const body = doc.getBody();
 
-  body.replaceText('{{NAMA_MAHASISWA}}', student.name || '');
-  body.replaceText('{{NIM}}', student.id || '');
-  body.replaceText('{{KELAS}}', cls ? cls.name : '');
-  body.replaceText('{{TAHUN_AJARAN}}', year ? year.name : '');
-  body.replaceText('{{JUDUL_PERIODE}}', 'كشف درجات السنة الكاملة');
-
+  const activeYearId = year ? String(year.id).trim() : '';
   const relevantClassSubjects = classSubjects.filter(cs => String(cs.classId).trim() === String(cls.id).trim());
   const table = body.getTables()[0];
   
@@ -794,26 +930,61 @@ function generateYearlyPdf(student, cls, year, enrollment, classSubjects, master
 
   relevantClassSubjects.forEach(function(cs, idx) {
     const master = masterSubjects.find(m => String(m.id).trim() === String(cs.masterSubjectId).trim());
-    const g = grades.find(x => String(x.enrollmentId).trim() === String(enrollment.id).trim() && String(x.classSubjectId).trim() === String(cs.id).trim());
+    const g = grades.find(x =>
+      String(x.enrollmentId).trim() === String(enrollment.id).trim() &&
+      String(x.classSubjectId).trim() === String(cs.id).trim()
+    );
     
-    const sem1 = g ? ((Number(g.sem1_uts) || 0) + (Number(g.sem1_uas) || 0)) : 0;
-    const sem2 = g ? ((Number(g.sem2_uts) || 0) + (Number(g.sem2_uas) || 0)) : 0;
+    const rawSem1 = g ? ((Number(g.sem1_uts) || 0) + (Number(g.sem1_uas) || 0)) : 0;
+    const rawSem2 = g ? ((Number(g.sem2_uts) || 0) + (Number(g.sem2_uas) || 0)) : 0;
+
+    const sem1 = resolveSemesterScoreWithRemidi(
+      student.id, activeYearId, cs.id, 1, rawSem1, isRemidiPublished, remidiRecords
+    );
+    const sem2 = resolveSemesterScoreWithRemidi(
+      student.id, activeYearId, cs.id, 2, rawSem2, isRemidiPublished, remidiRecords
+    );
+
     const finalAvg = (sem1 + sem2) / 2;
     grandTotal += finalAvg;
     count++;
 
-    const row = table.appendTableRow();
-    row.appendTableCell(String(idx + 1));
-    row.appendTableCell(master ? master.name : cs.masterSubjectId);
-    row.appendTableCell(String(sem1));
-    row.appendTableCell(String(sem2));
-    row.appendTableCell(finalAvg.toFixed(1));
-    row.appendTableCell(getPredicateArabic(finalAvg));
+    const subjectName = master ? master.name : cs.masterSubjectId;
+    const formattedSubAvg = Number.isInteger(finalAvg) ? String(finalAvg) : finalAvg.toFixed(1);
+
+    // Sesuai Gambar 2 (5 kolom RTL):
+    // Kolom 0: الرقم (Nomor)
+    // Kolom 1: أسماء المواد (Nama Mata Kuliah)
+    // Kolom 2: ف(1) (Nilai Semester 1)
+    // Kolom 3: ف(2) (Nilai Semester 2)
+    // Kolom 4: المعدل (Rata-rata Mata Kuliah)
+    appendFormattedRow(table, [
+      String(idx + 1),
+      String(subjectName || ''),
+      String(sem1),
+      String(sem2),
+      formattedSubAvg
+    ]);
   });
 
   const finalYearAvg = count > 0 ? (grandTotal / count) : 0;
-  body.replaceText('{{RATA_RATA_AKHIR}}', finalYearAvg.toFixed(2));
-  body.replaceText('{{STATUS_KELULUSAN}}', finalYearAvg >= 60 ? 'ناجح' : 'راسب');
+  const formattedGpa = finalYearAvg.toFixed(2);
+  const tanggalArab = formatArabicDate(new Date());
+
+  replaceDocumentPlaceholders(doc, {
+    '{{JUDUL_PERIODE}}': 'الفصل الدراسي الأول والثاني',
+    '{{NAMA}}': student.name || '',
+    '{{NAMA_MAHASISWA}}': student.name || '',
+    '{{NIM}}': student.id || '',
+    '{{KELAS}}': cls ? cls.name : '',
+    '{{TAHUN_AJARAN}}': year ? year.name : '',
+    '{{TAHUN_AKADEMIK}}': year ? year.name : '',
+    '{{GPA}}': formattedGpa,
+    '{{RATA_RATA}}': formattedGpa,
+    '{{RATA_RATA_AKHIR}}': formattedGpa,
+    '{{TANGGAL}}': tanggalArab,
+    '{{STATUS_KELULUSAN}}': finalYearAvg >= 60 ? 'ناجح' : 'راسب'
+  });
 
   doc.saveAndClose();
 
@@ -825,6 +996,267 @@ function generateYearlyPdf(student, cls, year, enrollment, classSubjects, master
     success: true,
     base64: base64,
     filename: 'KHS_Tahunan_' + student.id + '.pdf'
+  });
+}
+
+// =========================================================================
+// REKAP NILAI MATA KULIAH UNTUK DOSEN (SEMESTER 1/2 & GABUNGAN 2 SEMESTER)
+// =========================================================================
+function handleGenerateLecturerPdfRouter(classSubjectId, pdfType, yearId) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const users = getSheetData(ss, 'users');
+  const enrollments = getSheetData(ss, 'student_enrollments');
+  const classes = getSheetData(ss, 'classes');
+  const years = getSheetData(ss, 'academic_years');
+  const classSubjects = getSheetData(ss, 'class_subjects');
+  const masterSubjects = getSheetData(ss, 'master_subjects');
+  const grades = getSheetData(ss, 'grades');
+  const remidiSettings = getSheetData(ss, 'remidi_settings');
+  const remidiRecords = getSheetData(ss, 'remidi_records');
+
+  const cs = classSubjects.find(x => String(x.id).trim() === String(classSubjectId).trim());
+  if (!cs) {
+    return jsonResponse({ success: false, message: "Mata kuliah kelas tidak ditemukan" });
+  }
+
+  const master = masterSubjects.find(m => String(m.id).trim() === String(cs.masterSubjectId).trim());
+  const lecturer = users.find(u => String(u.id).trim().toLowerCase() === String(cs.lecturerId).trim().toLowerCase());
+  const cls = classes.find(c => String(c.id).trim() === String(cs.classId).trim());
+  const year = findAcademicYear(years, cls, yearId);
+  const activeYearId = year ? String(year.id).trim() : String(yearId || '').trim();
+
+  const yearRemidiSetting = remidiSettings.find(rs => String(rs.academicYearId).trim() === activeYearId);
+  const isRemidiPublished = Boolean(
+    yearRemidiSetting &&
+    (yearRemidiSetting.isPublished === true || String(yearRemidiSetting.isPublished).toLowerCase() === 'true')
+  );
+
+  const classEnrollments = enrollments.filter(e => String(e.classId).trim() === String(cs.classId).trim());
+
+  if (pdfType === 'YEARLY') {
+    return generateLecturerYearlyPdf(cs, master, lecturer, cls, year, activeYearId, classEnrollments, users, grades, isRemidiPublished, remidiRecords);
+  } else {
+    const semester = (pdfType === 'SEM2' || String(pdfType) === '2') ? 2 : 1;
+    return generateLecturerSingleSemesterPdf(cs, master, lecturer, cls, year, activeYearId, classEnrollments, users, grades, semester, isRemidiPublished, remidiRecords);
+  }
+}
+
+// 1. Rekap Dosen Semester 1 atau Semester 2
+// Tabel 4 Kolom RTL: الرقم | اسم الطالب | الدرجة | البيان (ناجح / راسب)
+function generateLecturerSingleSemesterPdf(cs, master, lecturer, cls, year, activeYearId, classEnrollments, users, grades, semester, isRemidiPublished, remidiRecords) {
+  if (!TEMPLATE_ID_LECTURER_SINGLE || TEMPLATE_ID_LECTURER_SINGLE === 'ISI_ID_TEMPLATE_DOSEN_SEMESTER_DISINI') {
+    return jsonResponse({
+      success: false,
+      message: "ID Template Google Docs Dosen Semester (TEMPLATE_ID_LECTURER_SINGLE) belum diisi di Code.gs"
+    });
+  }
+
+  const studentRows = [];
+  classEnrollments.forEach(function(enr) {
+    const st = users.find(u => String(u.id).trim().toLowerCase() === String(enr.studentId).trim().toLowerCase());
+    if (!st) return;
+
+    const g = grades.find(x =>
+      String(x.enrollmentId).trim() === String(enr.id).trim() &&
+      String(x.classSubjectId).trim() === String(cs.id).trim()
+    );
+
+    let uts = 0, uas = 0;
+    if (g) {
+      uts = semester === 1 ? (Number(g.sem1_uts) || 0) : (Number(g.sem2_uts) || 0);
+      uas = semester === 1 ? (Number(g.sem1_uas) || 0) : (Number(g.sem2_uas) || 0);
+    }
+    const rawScore = uts + uas;
+    const finalScore = resolveSemesterScoreWithRemidi(
+      st.id, activeYearId, cs.id, semester, rawScore, isRemidiPublished, remidiRecords
+    );
+
+    studentRows.push({
+      studentId: String(st.id || ''),
+      studentName: String(st.name || ''),
+      score: finalScore,
+      statusText: finalScore >= 60 ? 'ناجح' : 'راسب',
+      isPassed: finalScore >= 60
+    });
+  });
+
+  const copyFile = DriveApp.getFileById(TEMPLATE_ID_LECTURER_SINGLE).makeCopy('Temp_Dosen_Sem' + semester + '_' + cs.id);
+  const doc = DocumentApp.openById(copyFile.getId());
+  const body = doc.getBody();
+  const table = body.getTables()[0];
+
+  let totalScore = 0;
+  let passedCount = 0;
+
+  studentRows.forEach(function(item, idx) {
+    totalScore += item.score;
+    if (item.isPassed) passedCount++;
+
+    // 4 Kolom RTL:
+    // Kolom 0: الرقم (Nomor)
+    // Kolom 1: اسم الطالب (Nama Mahasiswa)
+    // Kolom 2: الدرجة (Nilai Semester)
+    // Kolom 3: البيان / الحالة (Keterangan ناجح atau راسب)
+    appendFormattedRow(table, [
+      String(idx + 1),
+      item.studentName,
+      String(item.score),
+      item.statusText
+    ]);
+  });
+
+  const totalStudents = studentRows.length;
+  const passRateNum = totalStudents > 0 ? ((passedCount / totalStudents) * 100) : 0;
+  const passRateStr = (Number.isInteger(passRateNum) ? String(passRateNum) : passRateNum.toFixed(1)) + '%';
+  const avgScore = totalStudents > 0 ? (totalScore / totalStudents).toFixed(2) : '0.00';
+  const judulPeriode = (semester === 1) ? 'الفصل الدراسي الأول' : 'الفصل الدراسي الثاني';
+  const tanggalArab = formatArabicDate(new Date());
+
+  replaceDocumentPlaceholders(doc, {
+    '{{JUDUL_PERIODE}}': judulPeriode,
+    '{{NAMA_DOSEN}}': lecturer ? lecturer.name : '',
+    '{{MATA_KULIAH}}': master ? master.name : cs.masterSubjectId,
+    '{{TAHUN_AKADEMIK}}': year ? year.name : '',
+    '{{TAHUN_AJARAN}}': year ? year.name : '',
+    '{{KELAS}}': cls ? cls.name : '',
+    '{{PERSENTASE_LULUS}}': passRateStr,
+    '{{JUMLAH_LULUS}}': String(passedCount),
+    '{{TOTAL_MAHASISWA}}': String(totalStudents),
+    '{{RATA_RATA}}': avgScore,
+    '{{GPA}}': avgScore,
+    '{{TANGGAL}}': tanggalArab
+  });
+
+  doc.saveAndClose();
+
+  const pdfBlob = copyFile.getAs('application/pdf');
+  const base64 = Utilities.base64Encode(pdfBlob.getBytes());
+  copyFile.setTrashed(true);
+
+  const safeSubCode = master ? String(master.id).trim() : String(cs.id).trim();
+  return jsonResponse({
+    success: true,
+    base64: base64,
+    filename: 'Rekap_Dosen_Sem' + semester + '_' + safeSubCode + '.pdf'
+  });
+}
+
+// 2. Rekap Dosen Gabungan 2 Semester / Tahunan (YEARLY)
+// Tabel 6 Kolom RTL: الرقم | اسم الطالب | ف(1) | ف(2) | المعدل | البيان (ناجح / راسب)
+// (Juga mendukung otomatis jika tabel di template dibuat 5 kolom tanpa nama: الرقم | ف(1) | ف(2) | المعدل | البيان)
+function generateLecturerYearlyPdf(cs, master, lecturer, cls, year, activeYearId, classEnrollments, users, grades, isRemidiPublished, remidiRecords) {
+  if (!TEMPLATE_ID_LECTURER_YEARLY || TEMPLATE_ID_LECTURER_YEARLY === 'ISI_ID_TEMPLATE_DOSEN_TAHUNAN_DISINI') {
+    return jsonResponse({
+      success: false,
+      message: "ID Template Google Docs Dosen Tahunan (TEMPLATE_ID_LECTURER_YEARLY) belum diisi di Code.gs"
+    });
+  }
+
+  const studentRows = [];
+  classEnrollments.forEach(function(enr) {
+    const st = users.find(u => String(u.id).trim().toLowerCase() === String(enr.studentId).trim().toLowerCase());
+    if (!st) return;
+
+    const g = grades.find(x =>
+      String(x.enrollmentId).trim() === String(enr.id).trim() &&
+      String(x.classSubjectId).trim() === String(cs.id).trim()
+    );
+
+    const rawSem1 = g ? ((Number(g.sem1_uts) || 0) + (Number(g.sem1_uas) || 0)) : 0;
+    const rawSem2 = g ? ((Number(g.sem2_uts) || 0) + (Number(g.sem2_uas) || 0)) : 0;
+
+    const sem1 = resolveSemesterScoreWithRemidi(
+      st.id, activeYearId, cs.id, 1, rawSem1, isRemidiPublished, remidiRecords
+    );
+    const sem2 = resolveSemesterScoreWithRemidi(
+      st.id, activeYearId, cs.id, 2, rawSem2, isRemidiPublished, remidiRecords
+    );
+
+    const avg = (sem1 + sem2) / 2;
+    const formattedAvg = Number.isInteger(avg) ? String(avg) : avg.toFixed(1);
+    // Kelulusan dihitung dari kolom rata-rata (المعدل >= 60)
+    const isPassed = avg >= 60;
+
+    studentRows.push({
+      studentId: String(st.id || ''),
+      studentName: String(st.name || ''),
+      sem1: sem1,
+      sem2: sem2,
+      avg: avg,
+      formattedAvg: formattedAvg,
+      statusText: isPassed ? 'ناجح' : 'راسب',
+      isPassed: isPassed
+    });
+  });
+
+  const copyFile = DriveApp.getFileById(TEMPLATE_ID_LECTURER_YEARLY).makeCopy('Temp_Dosen_Yearly_' + cs.id);
+  const doc = DocumentApp.openById(copyFile.getId());
+  const body = doc.getBody();
+  const table = body.getTables()[0];
+  const headerColCount = table.getNumRows() > 0 ? table.getRow(0).getNumCells() : 6;
+
+  let grandTotalAvg = 0;
+  let passedCount = 0;
+
+  studentRows.forEach(function(item, idx) {
+    grandTotalAvg += item.avg;
+    if (item.isPassed) passedCount++;
+
+    if (headerColCount === 5) {
+      // Jika tabel template dibuat 5 kolom: الرقم | ف(1) | ف(2) | المعدل | البيان
+      appendFormattedRow(table, [
+        String(idx + 1),
+        String(item.sem1),
+        String(item.sem2),
+        item.formattedAvg,
+        item.statusText
+      ]);
+    } else {
+      // Default 6 kolom RTL: الرقم | اسم الطالب | ف(1) | ف(2) | المعدل | البيان
+      appendFormattedRow(table, [
+        String(idx + 1),
+        item.studentName,
+        String(item.sem1),
+        String(item.sem2),
+        item.formattedAvg,
+        item.statusText
+      ]);
+    }
+  });
+
+  const totalStudents = studentRows.length;
+  // Persentase lulus dihitung dari kolom rata-rata (المعدل >= 60)
+  const passRateNum = totalStudents > 0 ? ((passedCount / totalStudents) * 100) : 0;
+  const passRateStr = (Number.isInteger(passRateNum) ? String(passRateNum) : passRateNum.toFixed(1)) + '%';
+  const classAvgStr = totalStudents > 0 ? (grandTotalAvg / totalStudents).toFixed(2) : '0.00';
+  const tanggalArab = formatArabicDate(new Date());
+
+  replaceDocumentPlaceholders(doc, {
+    '{{JUDUL_PERIODE}}': 'الفصل الدراسي الأول والثاني',
+    '{{NAMA_DOSEN}}': lecturer ? lecturer.name : '',
+    '{{MATA_KULIAH}}': master ? master.name : cs.masterSubjectId,
+    '{{TAHUN_AKADEMIK}}': year ? year.name : '',
+    '{{TAHUN_AJARAN}}': year ? year.name : '',
+    '{{KELAS}}': cls ? cls.name : '',
+    '{{PERSENTASE_LULUS}}': passRateStr,
+    '{{JUMLAH_LULUS}}': String(passedCount),
+    '{{TOTAL_MAHASISWA}}': String(totalStudents),
+    '{{RATA_RATA}}': classAvgStr,
+    '{{GPA}}': classAvgStr,
+    '{{TANGGAL}}': tanggalArab
+  });
+
+  doc.saveAndClose();
+
+  const pdfBlob = copyFile.getAs('application/pdf');
+  const base64 = Utilities.base64Encode(pdfBlob.getBytes());
+  copyFile.setTrashed(true);
+
+  const safeSubCode = master ? String(master.id).trim() : String(cs.id).trim();
+  return jsonResponse({
+    success: true,
+    base64: base64,
+    filename: 'Rekap_Dosen_Tahunan_' + safeSubCode + '.pdf'
   });
 }
 

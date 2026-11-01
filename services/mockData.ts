@@ -1395,6 +1395,55 @@ export const generatePdf = async (studentId: string, type: 'DEFAULT' | 'SEM1' | 
   return { base64: json.base64, filename: json.filename };
 };
 
+export const generateLecturerSubjectPdf = async (
+  classSubjectId: string,
+  pdfType: 'SEM1' | 'SEM2' | 'YEARLY',
+  yearId?: string
+): Promise<{ base64: string; filename: string }> => {
+  if (!API_URL || API_URL.includes("REPLACE_WITH")) throw new Error("API URL not configured");
+
+  const params = new URLSearchParams({
+    action: 'GENERATE_LECTURER_PDF',
+    classSubjectId: classSubjectId,
+    pdfType: pdfType,
+    semester: pdfType === 'SEM2' ? '2' : '1'
+  });
+
+  if (yearId) {
+    params.append('yearId', yearId);
+  }
+
+  let res;
+  try {
+    res = await fetchNoCache(`${API_URL}?${params.toString()}`, {
+      method: 'GET',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' }
+    });
+  } catch (e) {
+    throw new Error("Gagal terhubung ke server (Network Error). Periksa koneksi internet.");
+  }
+
+  if (!res.ok) {
+    throw new Error(`HTTP Error: ${res.status} ${res.statusText}`);
+  }
+
+  let json;
+  try {
+    json = await res.json();
+  } catch (e) {
+    throw new Error("Server mengembalikan respons yang tidak valid.");
+  }
+
+  if (json.success === false) {
+    if (String(json.message || '').includes('Invalid Action')) {
+      throw new Error("Server Google Apps Script masih menjalankan versi lama. Silakan di Google Apps Script klik: Deploy -> Manage deployments -> ikon Pensil (Edit) -> Version: New version -> Deploy.");
+    }
+    throw new Error(json.message || "Gagal membuat PDF rekap nilai dosen di server.");
+  }
+
+  return { base64: json.base64, filename: json.filename };
+};
+
 // ============================================================================
 // REMIDI / TAKMILI (التكميلي / الإعادة) SERVICE ENGINE
 // ============================================================================

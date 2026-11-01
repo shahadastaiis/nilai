@@ -11,7 +11,8 @@ import {
   saveSubjectSemesterGrades,
   getRemidiSettings,
   getLecturerRemidiRecords,
-  bulkSaveRemidiScores
+  bulkSaveRemidiScores,
+  generateLecturerSubjectPdf
 } from '../services/mockData';
 import { showSuccess, showError, confirmAction } from '../utils/swal';
 
@@ -162,6 +163,7 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [reloading, setReloading] = useState(false);
+  const [downloadingPdf, setDownloadingPdf] = useState<'SEM1' | 'SEM2' | 'YEARLY' | null>(null);
 
   const [activeTab, setActiveTab] = useState<TabType>('sem1');
 
@@ -260,6 +262,41 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
       showError('فشل تحديث البيانات');
     } finally {
       setReloading(false);
+    }
+  };
+
+  const handleDownloadSubjectPdf = async (pdfType: 'SEM1' | 'SEM2' | 'YEARLY') => {
+    if (!selectedSubject || !selectedYear) return;
+    if (studentsData.length === 0) {
+      showError('لا يوجد طلاب مسجلون في هذا المقرر');
+      return;
+    }
+
+    setDownloadingPdf(pdfType);
+    try {
+      const { base64, filename } = await generateLecturerSubjectPdf(selectedSubject.id, pdfType, selectedYear);
+      const byteCharacters = atob(base64);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], { type: 'application/pdf' });
+
+      const link = document.createElement('a');
+      const url = URL.createObjectURL(blob);
+      link.href = url;
+      link.download = filename || `KHS_Dosen_${pdfType}_${selectedSubject.subjectCode}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      showSuccess('تم تحميل كشف درجات المقرر (PDF) بنجاح');
+    } catch (err: any) {
+      showError(err?.message || 'فشل إنشاء ملف PDF من الخادم');
+    } finally {
+      setDownloadingPdf(null);
     }
   };
 
@@ -721,13 +758,63 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
             </button>
           </div>
 
-          {/* TAB NAVIGATION */}
-          <div className="px-3.5 py-2 sm:px-5 bg-slate-50/70 border-b border-slate-200/60 overflow-x-auto no-scrollbar">
-            <div className="flex bg-slate-200/60 p-1 rounded-xl min-w-[280px] max-w-xl">
-              <TabButton id="sem1" label="الفصل الأول" />
-              <TabButton id="sem2" label="الفصل الثاني" />
-              <TabButton id="recap" label="المحصلة" />
-              <TabButton id="remidi" label="التكميلي" />
+          {/* TAB NAVIGATION & PDF DOWNLOAD BAR */}
+          <div className="px-3.5 py-2.5 sm:px-5 bg-slate-50/70 border-b border-slate-200/60 flex flex-col lg:flex-row lg:items-center justify-between gap-2.5">
+            <div className="overflow-x-auto no-scrollbar">
+              <div className="flex bg-slate-200/60 p-1 rounded-xl min-w-[280px] max-w-xl">
+                <TabButton id="sem1" label="الفصل الأول" />
+                <TabButton id="sem2" label="الفصل الثاني" />
+                <TabButton id="recap" label="المحصلة" />
+                <TabButton id="remidi" label="التكميلي" />
+              </div>
+            </div>
+
+            <div className="bg-white p-1.5 rounded-xl border border-slate-200/80 flex flex-wrap items-center gap-1.5 shadow-2xs">
+              <span className="text-[11px] font-extrabold text-slate-500 px-2 flex items-center gap-1.5 whitespace-nowrap">
+                <svg className="w-3.5 h-3.5 text-[#064E3B]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                <span>تحميل الكشف (PDF):</span>
+              </span>
+
+              <button
+                onClick={() => handleDownloadSubjectPdf('SEM1')}
+                disabled={downloadingPdf !== null || studentsData.length === 0}
+                className="flex-1 sm:flex-initial px-3 py-1.5 rounded-lg text-[11px] font-extrabold bg-emerald-50 text-[#064E3B] border border-emerald-200/80 hover:bg-[#064E3B] hover:text-white transition-all disabled:opacity-45 disabled:pointer-events-none flex items-center justify-center gap-1.5 whitespace-nowrap cursor-pointer"
+              >
+                {downloadingPdf === 'SEM1' ? (
+                  <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                ) : (
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                )}
+                <span>الفصل الأول</span>
+              </button>
+
+              <button
+                onClick={() => handleDownloadSubjectPdf('SEM2')}
+                disabled={downloadingPdf !== null || studentsData.length === 0}
+                className="flex-1 sm:flex-initial px-3 py-1.5 rounded-lg text-[11px] font-extrabold bg-emerald-50 text-[#064E3B] border border-emerald-200/80 hover:bg-[#064E3B] hover:text-white transition-all disabled:opacity-45 disabled:pointer-events-none flex items-center justify-center gap-1.5 whitespace-nowrap cursor-pointer"
+              >
+                {downloadingPdf === 'SEM2' ? (
+                  <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                ) : (
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                )}
+                <span>الفصل الثاني</span>
+              </button>
+
+              <button
+                onClick={() => handleDownloadSubjectPdf('YEARLY')}
+                disabled={downloadingPdf !== null || studentsData.length === 0}
+                className="flex-1 sm:flex-initial px-3 py-1.5 rounded-lg text-[11px] font-extrabold bg-[#064E3B] text-white hover:bg-emerald-900 transition-all disabled:opacity-45 disabled:pointer-events-none flex items-center justify-center gap-1.5 whitespace-nowrap cursor-pointer shadow-2xs"
+              >
+                {downloadingPdf === 'YEARLY' ? (
+                  <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                ) : (
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                )}
+                <span>السنة الكاملة</span>
+              </button>
             </div>
           </div>
 
