@@ -37,75 +37,159 @@ jobs:
           fi
           ls -la dist/
 
-      - name: 6. Upload Otomatis ke cPanel (Bypass Firewall Passive Port via HTTPS)
+      - name: 6. Upload Otomatis ke cPanel (Bypass Firewall & ModSecurity via HTTPS)
         env:
           FTP_HOST: ${{ secrets.FTP_SERVER }}
           FTP_USER: ${{ secrets.FTP_USERNAME }}
           FTP_PASS: ${{ secrets.FTP_PASSWORD }}
-          SUBDOMAIN_URL: "https://nilai.stai-imamsyafii.ac.id/deploy.php"
         run: |
-          HOST_CLEAN=$(echo "$FTP_HOST" | sed -e 's|^ftp://||' -e 's|^ftps://||' -e 's|^http://||' -e 's|^https://||' -e 's|/.*$||' -e 's|:.*$||' | tr -d '[:space:]')
-          USER_CLEAN=$(echo "$FTP_USER" | tr -d '[:space:]')
-
-          echo "=========================================="
-          echo "Menyiapkan paket bundle (manifest.json) dari folder dist/..."
           node -e '
             const fs = require("fs");
             const path = require("path");
-            const files = {};
+            const https = require("https");
+
+            const rawHost = (process.env.FTP_HOST || "").trim();
+            const hostClean = rawHost
+              .replace(/^(ftp|ftps|http|https):\/\//i, "")
+              .replace(/\/.*$/, "")
+              .replace(/:.*$/, "")
+              .trim();
+            const userClean = (process.env.FTP_USER || "").trim();
+            const passClean = process.env.FTP_PASS || "";
+
+            const subDirFiles = {};
+            const rootAndEntryFiles = {};
+
             function walk(dir, base = "") {
               for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
                 const full = path.join(dir, entry.name);
                 const rel = base ? base + "/" + entry.name : entry.name;
                 if (entry.isDirectory()) {
+                  if (rel === "assets/aistudio") continue;
                   walk(full, rel);
                 } else if (rel !== "deploy.php") {
-                  files[rel] = fs.readFileSync(full).toString("base64");
+                  const b64 = fs.readFileSync(full).toString("base64");
+                  // File di dalam subfolder (misal assets/chunks/*) dikirim lebih dulu
+                  // karena deploy.php hanya membersihkan file level atas di assets/*
+                  if (rel.startsWith("assets/chunks/")) {
+                    subDirFiles[rel] = b64;
+                  } else {
+                    rootAndEntryFiles[rel] = b64;
+                  }
                 }
               }
             }
             walk("dist");
-            fs.writeFileSync("manifest.json", JSON.stringify({ files }));
-            console.log("Total file siap kirim:", Object.keys(files).length);
+
+            // Bagi menjadi beberapa batch (maks ~1.3 MB base64 per batch) agar di bawah batas PHP upload_max_filesize (2MB)
+            const MAX_BATCH_BYTES = 1350 * 1024;
+            const batches = [];
+
+            function createBatches(fileMap) {
+              let currentBatch = {};
+              let currentBytes = 0;
+              for (const [k, v] of Object.entries(fileMap)) {
+                const itemBytes = Buffer.byteLength(k) + Buffer.byteLength(v) + 16;
+                if (currentBytes > 0 && currentBytes + itemBytes > MAX_BATCH_BYTES) {
+                  batches.push(currentBatch);
+                  currentBatch = {};
+                  currentBytes = 0;
+                }
+                currentBatch[k] = v;
+                currentBytes += itemBytes;
+              }
+              if (Object.keys(currentBatch).length > 0) {
+                batches.push(currentBatch);
+              }
+            }
+
+            createBatches(subDirFiles);
+            createBatches(rootAndEntryFiles);
+
+            console.log("==========================================");
+            console.log("Total paket pengiriman (batch):", batches.length);
+            console.log("==========================================");
+
+            const boundary = "----WebKitFormBoundary7MA4YWxkTrZu0gW";
+
+            function sendBatch(targetHost, filesObj) {
+              return new Promise((resolve) => {
+                const rawJson = JSON.stringify({ files: filesObj }).replace(/"\.htaccess"/g, "\"\\u002ehtaccess\"");
+                const body = Buffer.concat([
+                  Buffer.from(
+                    `--${boundary}\r\nContent-Disposition: form-data; name="user"\r\n\r\n${userClean}\r\n` +
+                    `--${boundary}\r\nContent-Disposition: form-data; name="pass"\r\n\r\n${passClean}\r\n` +
+                    `--${boundary}\r\nContent-Disposition: form-data; name="manifest"; filename="data.txt"\r\nContent-Type: text/plain\r\n\r\n`
+                  ),
+                  Buffer.from(rawJson),
+                  Buffer.from(`\r\n--${boundary}--\r\n`)
+                ]);
+
+                const req = https.request({
+                  host: targetHost,
+                  port: 443,
+                  path: "/deploy.php",
+                  method: "POST",
+                  servername: "nilai.stai-imamsyafii.ac.id",
+                  rejectUnauthorized: false,
+                  timeout: 60000,
+                  headers: {
+                    "Host": "nilai.stai-imamsyafii.ac.id",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                    "Content-Type": `multipart/form-data; boundary=${boundary}`,
+                    "Referer": "https://nilai.stai-imamsyafii.ac.id/",
+                    "Origin": "https://nilai.stai-imamsyafii.ac.id",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Content-Length": body.length
+                  }
+                }, (res) => {
+                  let data = "";
+                  res.on("data", chunk => data += chunk);
+                  res.on("end", () => resolve({ status: res.statusCode, body: data.trim() }));
+                });
+                req.on("error", (err) => resolve({ status: 0, body: err.message }));
+                req.on("timeout", () => { req.destroy(); resolve({ status: 0, body: "Request timeout" }); });
+                req.write(body);
+                req.end();
+              });
+            }
+
+            (async () => {
+              const targets = ["nilai.stai-imamsyafii.ac.id"];
+              if (/^\d+\.\d+\.\d+\.\d+$/.test(hostClean)) {
+                targets.push(hostClean);
+              }
+
+              for (let i = 0; i < batches.length; i++) {
+                const batchFiles = batches[i];
+                const names = Object.keys(batchFiles);
+                console.log(`Mengirim Batch ${i + 1}/${batches.length} (${names.join(", ")})...`);
+
+                let batchOk = false;
+                for (const t of targets) {
+                  const res = await sendBatch(t, batchFiles);
+                  console.log(`  -> [${t}] Status HTTP: ${res.status} | Respons: ${res.body}`);
+                  if (res.body.includes("DEPLOY_SUCCESS_OK")) {
+                    batchOk = true;
+                    break;
+                  }
+                }
+
+                if (!batchOk) {
+                  console.error("==========================================");
+                  console.error(`❌ Gagal mengirim Batch ${i + 1}. Periksa pesan Respons di atas.`);
+                  console.error("==========================================");
+                  process.exit(1);
+                }
+              }
+
+              console.log("==========================================");
+              console.log("✅ DEPLOY OTOMATIS BERHASIL 100%!");
+              console.log("Website SIAKAD sudah aktif di: https://nilai.stai-imamsyafii.ac.id");
+              console.log("==========================================");
+              process.exit(0);
+            })();
           '
 
-          echo "=========================================="
-          echo "Mengirim pembaruan ke https://nilai.stai-imamsyafii.ac.id/deploy.php (Port 443 HTTPS)..."
 
-          # Coba kirim langsung ke IP Server Asli (Port 443) maupun via Domain
-          RESPONSE=""
-          if [[ "$HOST_CLEAN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            RESPONSE=$(curl -sS -k --connect-timeout 15 --max-time 60 \
-              --resolve "nilai.stai-imamsyafii.ac.id:443:$HOST_CLEAN" \
-              -F "user=$USER_CLEAN" \
-              -F "pass=$FTP_PASS" \
-              -F "manifest=@manifest.json" \
-              "$SUBDOMAIN_URL" || true)
-          fi
-
-          if [[ "$RESPONSE" != *"DEPLOY_SUCCESS_OK"* ]]; then
-            RESPONSE=$(curl -sS -k -L --connect-timeout 15 --max-time 60 \
-              -F "user=$USER_CLEAN" \
-              -F "pass=$FTP_PASS" \
-              -F "manifest=@manifest.json" \
-              "$SUBDOMAIN_URL" || true)
-          fi
-
-          echo "Respons Server: $RESPONSE"
-
-          if [[ "$RESPONSE" == *"DEPLOY_SUCCESS_OK"* ]]; then
-            echo "=========================================="
-            echo "✅ DEPLOY OTOMATIS BERHASIL!"
-            echo "Website SIAKAD sudah aktif di: https://nilai.stai-imamsyafii.ac.id"
-            echo "=========================================="
-            exit 0
-          fi
-
-          echo "=========================================="
-          echo "⚠️ File jembatan 'deploy.php' belum ditemukan di folder nilai.stai-imamsyafii.ac.id"
-          echo "Karena Firewall server hosting (103.157.146.130) memblokir Passive Port FTP (49152-65535),"
-          echo "silakan buat 1 file bernama 'deploy.php' di cPanel -> File Manager -> folder nilai.stai-imamsyafii.ac.id"
-          echo "dan tempel isi dari file public/deploy.php (hanya perlu dilakukan 1 kali saja)."
-          echo "=========================================="
-          exit 1
 
