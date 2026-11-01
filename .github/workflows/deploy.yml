@@ -70,23 +70,95 @@ jobs:
           echo "✅ Port 21 terbuka! Memulai proses login & upload..."
           echo "=========================================="
 
-          lftp -c "
-            debug 3;
+          COMMON_MIRROR="mirror --reverse --delete --verbose --exclude-glob .well-known/ --exclude-glob cgi-bin/ --exclude-glob .ftpquota --exclude-glob .htaccess.bak* ./dist/ ./"
+
+          echo "--> [Mode 1/4] Mencoba FTPS Penuh (TLS Data + PASV IPv4 tanpa EPSV)..."
+          if lftp -c "
+            debug 5;
+            set dns:order \"inet\";
             set ssl:verify-certificate no;
             set ftp:ssl-allow yes;
-            set ftp:ssl-protect-data no;
+            set ftp:ssl-protect-data yes;
+            set ftp:ssl-protect-list yes;
+            set ftp:prefer-epsv no;
+            set ftp:fix-pasv-address yes;
             set ftp:passive-mode on;
-            set net:timeout 15;
-            set net:max-retries 2;
-            set net:reconnect-interval-base 3;
+            set net:timeout 12;
+            set net:max-retries 1;
+            set net:reconnect-interval-base 2;
             open -u \"$USER_CLEAN\",\"$FTP_PASS\" -p 21 \"$HOST_CLEAN\";
-            mirror --reverse --delete --verbose \
-              --exclude-glob .well-known/ \
-              --exclude-glob cgi-bin/ \
-              --exclude-glob .ftpquota \
-              --exclude-glob .htaccess.bak* \
-              ./dist/ ./;
+            $COMMON_MIRROR;
             bye
-          "
+          "; then
+            echo "✅ Upload berhasil menggunakan Mode 1 (FTPS Penuh)!"
+            exit 0
+          fi
 
+          echo "--> [Mode 2/4] Mencoba Plain FTP (Tanpa TLS + PASV IPv4 tanpa EPSV)..."
+          if lftp -c "
+            debug 5;
+            set dns:order \"inet\";
+            set ftp:ssl-allow no;
+            set ftp:prefer-epsv no;
+            set ftp:fix-pasv-address yes;
+            set ftp:passive-mode on;
+            set net:timeout 12;
+            set net:max-retries 1;
+            set net:reconnect-interval-base 2;
+            open -u \"$USER_CLEAN\",\"$FTP_PASS\" -p 21 \"$HOST_CLEAN\";
+            $COMMON_MIRROR;
+            bye
+          "; then
+            echo "✅ Upload berhasil menggunakan Mode 2 (Plain FTP)!"
+            exit 0
+          fi
 
+          echo "--> [Mode 3/4] Mencoba Upload Per-File via cURL (Bypass LIST directory)..."
+          CURL_SUCCESS=true
+          cd dist
+          for FILE in $(find . -type f | sed 's|^\./||'); do
+            echo "Mengunggah file: $FILE"
+            if ! curl -sS --connect-timeout 10 --max-time 30 \
+              --disable-epsv --ftp-skip-pasv-ip --ftp-create-dirs \
+              -k --ssl-reqd \
+              --user "$USER_CLEAN:$FTP_PASS" \
+              -T "$FILE" "ftp://$HOST_CLEAN:21/$FILE"; then
+              if ! curl -sS --connect-timeout 10 --max-time 30 \
+                --disable-epsv --ftp-skip-pasv-ip --ftp-create-dirs \
+                --user "$USER_CLEAN:$FTP_PASS" \
+                -T "$FILE" "ftp://$HOST_CLEAN:21/$FILE"; then
+                CURL_SUCCESS=false
+                break
+              fi
+            fi
+          done
+          cd ..
+          if [ "$CURL_SUCCESS" = true ]; then
+            echo "✅ Upload berhasil menggunakan Mode 3 (cURL Per-File)!"
+            exit 0
+          fi
+
+          echo "--> [Mode 4/4] Mencoba FTP Active Mode (Tanpa Passive Port)..."
+          if lftp -c "
+            debug 5;
+            set dns:order \"inet\";
+            set ssl:verify-certificate no;
+            set ftp:ssl-allow yes;
+            set ftp:ssl-protect-data yes;
+            set ftp:ssl-protect-list yes;
+            set ftp:passive-mode off;
+            set net:timeout 12;
+            set net:max-retries 1;
+            open -u \"$USER_CLEAN\",\"$FTP_PASS\" -p 21 \"$HOST_CLEAN\";
+            $COMMON_MIRROR;
+            bye
+          "; then
+            echo "✅ Upload berhasil menggunakan Mode 4 (FTP Active Mode)!"
+            exit 0
+          fi
+
+          echo "=========================================="
+          echo "❌ Semua mode koneksi data FTP mengalami Timeout setelah Login (230 User logged in)."
+          echo "Penyebab: Firewall server hosting memblokir rentang Passive Port pada ProFTPD."
+          echo "=========================================="
+          exit 1
