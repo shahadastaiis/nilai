@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { User, AcademicYear, StudentEnrollment, Role, GradeStatus, MasterSubject, SubjectView, UserStatus, Class, ClassSubject, ClassRecapRow, ClassRemidiRecapRow, StudentGradeView, GradeEditRequest, RemidiRecord, RemidiSettings, StudentAcademicHistory } from '../types';
-import { getAcademicYears, getAdminData, assignStudentToClass, bulkAssignStudentsToClass, createSubjectAssignment, bulkCreateSubjectAssignments, getSubjectsByYear, getEnrollmentsByYear, getClassEnrollments, toggleSemesterStatus, subscribeToData, createClass, getClassesByYear, getClassRecap, getClassRemidiRecap, getMasterSubjects, bulkCreateUsers, bulkCreateMasterSubjects, removeSubjectAssignment, removeStudentFromClass, publishClassGrades, updateSubjectStatus, reloadSpecificData, normalizeGender, getStudentGrades, getAllStudentGrades, getKhsEnrolledStudents, getStudentAcademicHistory, getAcademicPredicate, compareAcademicYearsAsc, generatePdf, publishAllGradesInYear, unpublishAllGradesInYear, getGradeEditRequests, respondGradeEditRequest, updateUser, updateMasterSubject, deleteGradeEditRequest, getRemidiSettings, toggleRemidiInputStatus, toggleRemidiPublishStatus, syncAndGetRemidiCandidates, toggleRemidiEligibility, bulkSetRemidiEligibility, saveRemidiScore } from '../services/mockData';
+import { getAcademicYears, getAdminData, assignStudentToClass, bulkAssignStudentsToClass, createSubjectAssignment, bulkCreateSubjectAssignments, getSubjectsByYear, getEnrollmentsByYear, getClassEnrollments, toggleSemesterStatus, getSemesterUninputtedSubjectsByClass, SemesterCompletenessReport, subscribeToData, createClass, getClassesByYear, getClassRecap, getClassRemidiRecap, getMasterSubjects, bulkCreateUsers, bulkCreateMasterSubjects, removeSubjectAssignment, removeStudentFromClass, publishClassGrades, updateSubjectStatus, reloadSpecificData, normalizeGender, getStudentGrades, getAllStudentGrades, getKhsEnrolledStudents, getStudentAcademicHistory, getAcademicPredicate, compareAcademicYearsAsc, generatePdf, publishAllGradesInYear, unpublishAllGradesInYear, getGradeEditRequests, respondGradeEditRequest, updateUser, updateMasterSubject, deleteGradeEditRequest, getRemidiSettings, toggleRemidiInputStatus, toggleRemidiPublishStatus, syncAndGetRemidiCandidates, toggleRemidiEligibility, bulkSetRemidiEligibility, saveRemidiScore } from '../services/mockData';
 import { showSuccess, showError, confirmDelete, confirmAction } from '../utils/swal';
 import * as XLSX from 'xlsx';
 import ExcelJS from 'exceljs';
@@ -40,10 +40,10 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, activeMenu, onMen
               case 'lecturers': targets = ['users']; break;
               case 'subjects': targets = ['master_subjects']; break;
               case 'classes': targets = ['classes', 'class_subjects', 'student_enrollments', 'users']; break;
-              case 'settings': targets = ['academic_years', 'classes', 'class_subjects']; break;
-              case 'remidi':
+              case 'settings': targets = ['academic_years', 'classes', 'class_subjects', 'student_enrollments', 'grades', 'grade_edit_requests', 'users', 'master_subjects']; break;
+              case 'remidi': targets = ['remidi_settings', 'remidi_records', 'grade_edit_requests', 'classes', 'student_enrollments', 'class_subjects', 'grades', 'users', 'academic_years', 'master_subjects']; break;
               case 'report':
-              case 'khs': targets = ['classes', 'student_enrollments', 'class_subjects', 'grades', 'users', 'academic_years']; break;
+              case 'khs': targets = ['classes', 'student_enrollments', 'class_subjects', 'grades', 'users', 'academic_years', 'master_subjects', 'remidi_settings', 'remidi_records']; break;
               default: targets = ['academic_years'];
           }
           await reloadSpecificData(targets);
@@ -504,7 +504,9 @@ const MasterSubjectManager = () => {
                     <div key={`${s.id}_${idx}`} className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-2xs hover:border-emerald-500/40 transition-all flex justify-between items-center gap-2 group">
                         <div className="min-w-0">
                             <h3 className="font-extrabold text-slate-900 text-sm group-hover:text-[#064E3B] transition-colors truncate" title={s.name}>{s.name}</h3>
-                            <span className="text-[11px] font-mono tabular-nums text-slate-400 block mt-0.5">{s.id}</span>
+                            {s.id && s.id.trim() !== s.name.trim() && (
+                                <span className="text-[11px] font-mono tabular-nums text-slate-400 block mt-0.5">{s.id}</span>
+                            )}
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
                             <span className="text-[11px] text-[#064E3B] bg-emerald-50 border border-emerald-200/60 px-2.5 py-0.5 rounded-md font-bold tabular-nums">{s.sks} ساعات</span>
@@ -697,9 +699,14 @@ const ClassTransactionManager = ({ yearId, refreshKey, isFemaleAdmin }: { yearId
     };
 
     const handleRemoveStudent = async (studentId: string, classId: string) => {
+        const s = allStudents.find(u => u.id === studentId);
+        const confirmed = await confirmDelete('حذف الطالب من الفصل؟', `هل أنت متأكد من إزالة الطالب "${s?.name || studentId}" من هذا الفصل؟`);
+        if (!confirmed) return;
         setRemovingStudentId(studentId);
         try {
             await removeStudentFromClass(studentId, classId);
+            setEnrolledStudents(prev => prev.filter(e => e.studentId !== studentId));
+            showSuccess('تم إزالة الطالب من الفصل');
         } catch(e) { showError('فشل حذف الطالب'); }
         finally { setRemovingStudentId(null); }
     };
@@ -745,9 +752,14 @@ const ClassTransactionManager = ({ yearId, refreshKey, isFemaleAdmin }: { yearId
     };
 
     const handleRemoveSubject = async (id: string) => {
+        const sub = assignedSubjects.find(s => s.id === id);
+        const confirmed = await confirmDelete('حذف المقرر من الفصل؟', `هل أنت متأكد من إلغاء إسناد مقرر "${sub?.subjectName || ''}" من هذا الفصل؟`);
+        if (!confirmed) return;
         setRemovingSubjectId(id);
         try {
             await removeSubjectAssignment(id);
+            setAssignedSubjects(prev => prev.filter(s => s.id !== id));
+            showSuccess('تم حذف المقرر من الفصل');
         } catch(e) { showError('فشل حذف المقرر'); }
         finally { setRemovingSubjectId(null); }
     };
@@ -1084,6 +1096,10 @@ const GradeSettingsManager = ({ yearId, refreshKey, isFemaleAdmin }: { yearId: s
     const [semesterFilter, setSemesterFilter] = useState<'ALL' | '1' | '2' | 'REMIDI'>('ALL');
     const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
 
+    const [sem1Report, setSem1Report] = useState<SemesterCompletenessReport | null>(null);
+    const [sem2Report, setSem2Report] = useState<SemesterCompletenessReport | null>(null);
+    const [activeCompletenessSem, setActiveCompletenessSem] = useState<1 | 2>(1);
+
     const loadData = async () => {
         const [yrs, reqs, adminD, subs, clsList] = await Promise.all([
             getAcademicYears(),
@@ -1106,6 +1122,11 @@ const GradeSettingsManager = ({ yearId, refreshKey, isFemaleAdmin }: { yearId: s
             setSubjects(subs);
         }
         setAllLecturers(adminD.lecturers);
+
+        const rep1 = getSemesterUninputtedSubjectsByClass(yearId, 1, isFemaleAdmin);
+        const rep2 = getSemesterUninputtedSubjectsByClass(yearId, 2, isFemaleAdmin);
+        setSem1Report(rep1);
+        setSem2Report(rep2);
     };
 
     useEffect(() => {
@@ -1115,10 +1136,34 @@ const GradeSettingsManager = ({ yearId, refreshKey, isFemaleAdmin }: { yearId: s
     const handleToggle = async (sem: 1 | 2, currentVal: boolean) => {
         const nextVal = !currentVal;
         const semName = sem === 1 ? 'الفصل الأول' : 'الفصل الثاني';
+        const report = sem === 1 ? sem1Report : sem2Report;
+
+        // Jika Admin ingin MENUTUP akses penginputan nilai (currentVal === true -> nextVal === false)
+        // Wajib pastikan seluruh mata kuliah sudah terinput nilainya!
+        if (!nextVal && report) {
+            setActiveCompletenessSem(sem);
+            if (report.totalSubjectsCount === 0) {
+                showError(`لا يمكن إغلاق رصد ${semName} لعدم وجود مقررات دراسية مسندة لطلاب في هذا العام.`);
+                return;
+            }
+            if (!report.isComplete) {
+                showError(
+                    `تنبيه: لا يمكن إغلاق رصد ${semName}! لا يزال هناك (${report.missingSubjectsCount}) مقرر دراسي في (${report.uninputtedByClass.length}) فصل لم يتم إدخال درجاته بعد. يرجى مراجعة قائمة المقررات والمحاضرين أدناه أولاً.`
+                );
+                const warningEl = document.getElementById('completeness-warning-section');
+                if (warningEl) {
+                    warningEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+                return;
+            }
+        }
+
         const actionTitle = nextVal ? `فتح رصد ${semName}` : `إغلاق رصد ${semName}`;
         const actionText = nextVal 
-            ? `هل تريد فتح رصد الدرجات لـ ${semName}؟`
-            : `هل تريد إغلاق رصد الدرجات لـ ${semName}؟`;
+            ? (report && report.inputtedSubjectsCount > 0
+                ? `هل تريد إعادة فتح ${semName}؟ بما أن الدرجات قد رُصدت مسبقاً، فسيتمكن المحاضرون من تعديل الدرجات فقط عبر تقديم طلب تعديل للإدارة.`
+                : `هل تريد فتح رصد الدرجات لـ ${semName} ليتمكن المحاضرون من إدخال الدرجات؟`)
+            : `جميع المقررات الدراسية (${report?.inputtedSubjectsCount || 0}) مكتملة الرصد. هل تريد إغلاق رصد الدرجات لـ ${semName} نهائياً؟`;
 
         const confirmed = await confirmAction(
             actionTitle,
@@ -1258,6 +1303,8 @@ const GradeSettingsManager = ({ yearId, refreshKey, isFemaleAdmin }: { yearId: s
 
     if (!year) return <div className="p-8 text-center text-slate-400 font-bold">جاري تحميل الإعدادات...</div>;
 
+    const activeReport = activeCompletenessSem === 1 ? sem1Report : sem2Report;
+
     return (
         <div className="space-y-5">
             {/* 1. SEMESTER ACCESS & PUBLISH */}
@@ -1270,20 +1317,40 @@ const GradeSettingsManager = ({ yearId, refreshKey, isFemaleAdmin }: { yearId: s
                                 {year.isSem1Active ? 'مفتوح' : 'مغلق'}
                             </span>
                         </div>
-                        <p className="text-xs text-slate-500 mb-4">
+                        <p className="text-xs text-slate-500 mb-2">
                             {year.isSem1Active ? 'الرصد متاح للمحاضرين' : 'الرصد مقفل حالياً'}
                         </p>
+                        {sem1Report && (
+                            <div className={`mb-3.5 px-2.5 py-1.5 rounded-xl border text-[11px] font-bold flex items-center justify-between ${
+                                sem1Report.isComplete
+                                    ? 'bg-emerald-50 border-emerald-200/80 text-emerald-800'
+                                    : 'bg-amber-50 border-amber-200/80 text-amber-900'
+                            }`}>
+                                <span>حالة رصد المقررات:</span>
+                                <span className="font-extrabold tabular-nums">
+                                    {sem1Report.inputtedSubjectsCount} / {sem1Report.totalSubjectsCount} مكتمل
+                                </span>
+                            </div>
+                        )}
                     </div>
                     <button
                         onClick={() => handleToggle(1, year.isSem1Active)}
                         disabled={togglingSem === 1}
-                        className={`w-full py-2.5 px-4 rounded-xl text-xs font-extrabold transition-all flex items-center justify-center gap-2 ${
+                        className={`w-full py-2.5 px-4 rounded-xl text-xs font-extrabold transition-all flex items-center justify-center gap-2 cursor-pointer ${
                             year.isSem1Active 
-                            ? 'bg-red-600 hover:bg-red-700 text-white' 
+                            ? (sem1Report?.isComplete
+                                ? 'bg-red-600 hover:bg-red-700 text-white'
+                                : 'bg-amber-600 hover:bg-amber-700 text-white')
                             : 'bg-[#064E3B] hover:bg-emerald-800 text-white'
                         } disabled:opacity-50`}
                     >
-                        {togglingSem === 1 ? 'جاري التنفيذ...' : year.isSem1Active ? 'إغلاق الرصد' : 'فتح الرصد'}
+                        {togglingSem === 1
+                            ? 'جاري التنفيذ...'
+                            : year.isSem1Active
+                                ? (sem1Report && !sem1Report.isComplete
+                                    ? `إغلاق الرصد (متبقي ${sem1Report.missingSubjectsCount} مقرر)`
+                                    : 'إغلاق الرصد')
+                                : 'فتح الرصد'}
                     </button>
                 </div>
 
@@ -1295,20 +1362,40 @@ const GradeSettingsManager = ({ yearId, refreshKey, isFemaleAdmin }: { yearId: s
                                 {year.isSem2Active ? 'مفتوح' : 'مغلق'}
                             </span>
                         </div>
-                        <p className="text-xs text-slate-500 mb-4">
+                        <p className="text-xs text-slate-500 mb-2">
                             {year.isSem2Active ? 'الرصد متاح للمحاضرين' : 'الرصد مقفل حالياً'}
                         </p>
+                        {sem2Report && (
+                            <div className={`mb-3.5 px-2.5 py-1.5 rounded-xl border text-[11px] font-bold flex items-center justify-between ${
+                                sem2Report.isComplete
+                                    ? 'bg-emerald-50 border-emerald-200/80 text-emerald-800'
+                                    : 'bg-amber-50 border-amber-200/80 text-amber-900'
+                            }`}>
+                                <span>حالة رصد المقررات:</span>
+                                <span className="font-extrabold tabular-nums">
+                                    {sem2Report.inputtedSubjectsCount} / {sem2Report.totalSubjectsCount} مكتمل
+                                </span>
+                            </div>
+                        )}
                     </div>
                     <button
                         onClick={() => handleToggle(2, year.isSem2Active)}
                         disabled={togglingSem === 2}
-                        className={`w-full py-2.5 px-4 rounded-xl text-xs font-extrabold transition-all flex items-center justify-center gap-2 ${
+                        className={`w-full py-2.5 px-4 rounded-xl text-xs font-extrabold transition-all flex items-center justify-center gap-2 cursor-pointer ${
                             year.isSem2Active 
-                            ? 'bg-red-600 hover:bg-red-700 text-white' 
+                            ? (sem2Report?.isComplete
+                                ? 'bg-red-600 hover:bg-red-700 text-white'
+                                : 'bg-amber-600 hover:bg-amber-700 text-white')
                             : 'bg-[#064E3B] hover:bg-emerald-800 text-white'
                         } disabled:opacity-50`}
                     >
-                        {togglingSem === 2 ? 'جاري التنفيذ...' : year.isSem2Active ? 'إغلاق الرصد' : 'فتح الرصد'}
+                        {togglingSem === 2
+                            ? 'جاري التنفيذ...'
+                            : year.isSem2Active
+                                ? (sem2Report && !sem2Report.isComplete
+                                    ? `إغلاق الرصد (متبقي ${sem2Report.missingSubjectsCount} مقرر)`
+                                    : 'إغلاق الرصد')
+                                : 'فتح الرصد'}
                     </button>
                 </div>
 
@@ -1342,6 +1429,161 @@ const GradeSettingsManager = ({ yearId, refreshKey, isFemaleAdmin }: { yearId: s
                         </button>
                     )}
                 </div>
+            </div>
+
+            {/* 1B. PRE-CLOSURE COMPLETENESS WARNING CLASSIFIED BY CLASS IN COLUMNS */}
+            <div id="completeness-warning-section" className="bg-white border border-slate-200/80 rounded-2xl p-4 sm:p-5 shadow-2xs space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                    <div>
+                        <div className="flex items-center gap-2">
+                            <h3 className="text-sm sm:text-base font-extrabold text-slate-900">
+                                التحقق من اكتمال رصد المقررات قبل إغلاق الرصد
+                            </h3>
+                            {activeReport && !activeReport.isComplete && (
+                                <span className="bg-amber-500 text-white text-[10px] px-2.5 py-0.5 rounded-full font-extrabold tabular-nums">
+                                    متبقي {activeReport.missingSubjectsCount} مقرر
+                                </span>
+                            )}
+                            {activeReport && activeReport.isComplete && (
+                                <span className="bg-emerald-600 text-white text-[10px] px-2.5 py-0.5 rounded-full font-extrabold">
+                                    مكتمل 100%
+                                </span>
+                            )}
+                        </div>
+                        <p className="text-[11px] sm:text-xs text-slate-500 mt-0.5">
+                            لا يمكن إغلاق رصد الفصل الدراسي إلا بعد التأكد من إدخال درجات جميع المقررات في كافة الفصول الدراسية.
+                        </p>
+                    </div>
+
+                    <div className="flex bg-slate-100 p-1 rounded-xl text-xs font-extrabold gap-1 shrink-0 self-start sm:self-auto">
+                        <button
+                            onClick={() => setActiveCompletenessSem(1)}
+                            className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+                                activeCompletenessSem === 1 ? 'bg-white text-[#064E3B] shadow-2xs' : 'text-slate-500 hover:text-slate-800'
+                            }`}
+                        >
+                            <span>الفصل الأول</span>
+                            {sem1Report && (
+                                <span className={`px-1.5 py-0.2 rounded text-[10px] tabular-nums ${
+                                    sem1Report.isComplete ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                                }`}>
+                                    {sem1Report.missingSubjectsCount === 0 ? 'مكتمل' : `متبقي ${sem1Report.missingSubjectsCount}`}
+                                </span>
+                            )}
+                        </button>
+                        <button
+                            onClick={() => setActiveCompletenessSem(2)}
+                            className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+                                activeCompletenessSem === 2 ? 'bg-white text-[#064E3B] shadow-2xs' : 'text-slate-500 hover:text-slate-800'
+                            }`}
+                        >
+                            <span>الفصل الثاني</span>
+                            {sem2Report && (
+                                <span className={`px-1.5 py-0.2 rounded text-[10px] tabular-nums ${
+                                    sem2Report.isComplete ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                                }`}>
+                                    {sem2Report.missingSubjectsCount === 0 ? 'مكتمل' : `متبقي ${sem2Report.missingSubjectsCount}`}
+                                </span>
+                            )}
+                        </button>
+                    </div>
+                </div>
+
+                {activeReport && activeReport.totalSubjectsCount === 0 ? (
+                    <div className="p-6 text-center bg-slate-50 rounded-xl border border-dashed border-slate-200 text-slate-400 font-bold text-xs">
+                        لا توجد مقررات مسندة لفصول بها طلاب في هذا العام الدراسي.
+                    </div>
+                ) : activeReport && activeReport.isComplete ? (
+                    <div className="bg-emerald-50/80 border border-emerald-200 rounded-xl p-4 flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                            <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0">
+                                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M5 13l4 4L19 7" />
+                                </svg>
+                            </div>
+                            <div>
+                                <h4 className="text-xs sm:text-sm font-extrabold text-emerald-950">
+                                    جميع المقررات الدراسية في {activeCompletenessSem === 1 ? 'الفصل الأول' : 'الفصل الثاني'} تم رصد درجاتها بالكامل ({activeReport.inputtedSubjectsCount} من {activeReport.totalSubjectsCount})
+                                </h4>
+                                <p className="text-[11px] text-emerald-800 mt-0.5">
+                                    يمكن للإدارة الآن إغلاق رصد الدرجات لهذا الفصل الدراسي بأمان.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                ) : activeReport ? (
+                    <div className="space-y-3">
+                        <div className="bg-amber-50 border border-amber-200/90 rounded-xl p-3 text-amber-950 text-xs flex items-start gap-2.5">
+                            <svg className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                            </svg>
+                            <div>
+                                <span className="font-extrabold block">
+                                    تنبيه: يوجد ({activeReport.missingSubjectsCount}) مقرر دراسي لم يتم إدخال درجاته في {activeCompletenessSem === 1 ? 'الفصل الأول' : 'الفصل الثاني'}!
+                                </span>
+                                <span className="text-[11px] text-amber-800 block mt-0.5">
+                                    فيما يلي قائمة المقررات غير المرصودة وأسماء المحاضرين مصنفة في أعمدة حسب كل فصل دراسي:
+                                </span>
+                            </div>
+                        </div>
+
+                        {/* Multi-Column Table Where Each Column Is a Class */}
+                        <div className="overflow-x-auto pb-2">
+                            <div className="inline-grid grid-flow-col auto-cols-[minmax(240px,1fr)] gap-3 min-w-full">
+                                {activeReport.uninputtedByClass.map((col) => (
+                                    <div
+                                        key={col.classObj.id}
+                                        className="bg-slate-50/70 rounded-xl border border-slate-200/90 overflow-hidden flex flex-col"
+                                    >
+                                        {/* Column Header: Class Name */}
+                                        <div className="bg-[#064E3B] text-white px-3.5 py-2.5 flex items-center justify-between gap-2">
+                                            <div className="min-w-0">
+                                                <div className="font-extrabold text-xs sm:text-sm truncate">
+                                                    {col.classObj.name}
+                                                </div>
+                                                <div className="text-[10px] text-emerald-100 flex items-center gap-1.5 mt-0.5">
+                                                    <span>{col.classObj.gender === 'FEMALE' ? 'بنات' : 'بنين'}</span>
+                                                    <span>•</span>
+                                                    <span className="tabular-nums">{col.studentCount} طالب</span>
+                                                </div>
+                                            </div>
+                                            <span className="bg-amber-500 text-white text-[10px] font-extrabold px-2 py-0.5 rounded-md shrink-0 tabular-nums">
+                                                متبقي {col.missingSubjects.length}
+                                            </span>
+                                        </div>
+
+                                        {/* Column Body: List of Uninputted Subjects & Assigned Lecturers */}
+                                        <div className="p-2.5 space-y-2 flex-1 divide-y divide-slate-100">
+                                            {col.missingSubjects.map((sub, sIdx) => (
+                                                <div
+                                                    key={sub.classSubjectId}
+                                                    className="bg-white p-2.5 rounded-lg border border-slate-200/80 shadow-2xs space-y-1"
+                                                >
+                                                    <div className="flex items-start justify-between gap-1.5">
+                                                        <span className="font-extrabold text-xs text-slate-900 leading-snug">
+                                                            {sIdx + 1}. {sub.subjectName}
+                                                        </span>
+                                                        <span className="text-[9px] font-mono text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-100 shrink-0 tabular-nums">
+                                                            {sub.gradedCount}/{sub.totalStudents}
+                                                        </span>
+                                                    </div>
+                                                    <div className="flex items-center gap-1.5 text-[11px] text-amber-900 bg-amber-50/70 px-2 py-1 rounded-md border border-amber-200/60">
+                                                        <svg className="w-3.5 h-3.5 text-amber-700 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                                                        </svg>
+                                                        <span className="font-bold truncate" title={sub.lecturerName}>
+                                                            {sub.lecturerName}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                ) : null}
             </div>
 
             {/* 2. GRADE EDIT REQUEST MANAGEMENT */}
@@ -2617,800 +2859,806 @@ const KhsManager = ({
     };
 
     return (
-        <div className="space-y-4">
+        <div className="bg-white border border-slate-200/90 rounded-2xl shadow-sm overflow-visible">
             {/* ===================================================================== */}
-            {/* 1. TOP CONTROL PANEL: TAHUN AKADEMIK, KELAS, & DROPDOWN MAHASISWA      */}
+            {/* 1. COMPACT SINGLE-ROW FILTER & STUDENT COMMAND BAR                    */}
             {/* ===================================================================== */}
-            <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-2xs">
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-3.5 items-end">
-                    {/* Filter 1: Tahun Akademik */}
-                    <div className="lg:col-span-3 space-y-1.5">
-                        <label className="block text-xs font-extrabold text-slate-600">
-                            العام الدراسي
-                        </label>
-                        <select
-                            value={yearId}
-                            onChange={e => onYearChange(e.target.value)}
-                            aria-label="العام الدراسي"
-                            className="w-full h-10.5 bg-slate-50/90 hover:bg-slate-100/80 focus:bg-white border border-slate-200/90 rounded-xl px-3.5 text-xs font-extrabold text-[#064E3B] outline-none focus:ring-2 focus:ring-emerald-500/15 focus:border-[#064E3B] transition-all cursor-pointer tabular-nums"
-                        >
-                            {sortedYears.map(y => (
-                                <option key={y.id} value={y.id}>
-                                    {y.name} {y.isActive ? '— (الحالي)' : ''}
-                                </option>
-                            ))}
-                        </select>
+            <div className="p-3 sm:p-4 bg-slate-50/70 border-b border-slate-200/80 rounded-t-2xl">
+                <div className="flex flex-col lg:flex-row items-stretch lg:items-center gap-2.5">
+                    {/* Group 1: Tahun Akademik & Kelas (Side-by-side even on mobile) */}
+                    <div className="grid grid-cols-2 sm:flex items-center gap-2 shrink-0">
+                        {/* Select Tahun Akademik */}
+                        <div className="relative min-w-0 sm:w-44">
+                            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3 text-[#064E3B]">
+                                <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                </svg>
+                            </div>
+                            <select
+                                value={yearId}
+                                onChange={e => onYearChange(e.target.value)}
+                                aria-label="العام الدراسي"
+                                title="العام الدراسي"
+                                className="w-full h-10 appearance-none bg-white hover:bg-slate-50 focus:bg-white border border-slate-200/90 hover:border-slate-300 rounded-xl pr-9 pl-7 text-xs font-extrabold text-[#064E3B] outline-none focus:ring-2 focus:ring-emerald-500/15 focus:border-[#064E3B] transition-all cursor-pointer tabular-nums truncate"
+                            >
+                                {sortedYears.map(y => (
+                                    <option key={y.id} value={y.id}>
+                                        {y.name} {y.isActive ? '•' : ''}
+                                    </option>
+                                ))}
+                            </select>
+                            <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-2.5 text-slate-400">
+                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M19 9l-7 7-7-7" />
+                                </svg>
+                            </div>
+                        </div>
+
+                        {/* Select Kelas */}
+                        <div className="relative min-w-0 sm:w-48">
+                            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400">
+                                <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                                </svg>
+                            </div>
+                            <select
+                                value={selectedClassId}
+                                onChange={e => setSelectedClassId(e.target.value)}
+                                aria-label="الفصل الدراسي"
+                                title="الفصل الدراسي"
+                                className="w-full h-10 appearance-none bg-white hover:bg-slate-50 focus:bg-white border border-slate-200/90 hover:border-slate-300 rounded-xl pr-9 pl-7 text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500/15 focus:border-[#064E3B] transition-all cursor-pointer truncate"
+                            >
+                                <option value="ALL">كل الفصول ({enrolledItems.length})</option>
+                                {classesInYear.map(c => (
+                                    <option key={c.id} value={c.id}>
+                                        {c.name} ({classStudentCounts[c.id] || 0})
+                                    </option>
+                                ))}
+                            </select>
+                            <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-2.5 text-slate-400">
+                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M19 9l-7 7-7-7" />
+                                </svg>
+                            </div>
+                        </div>
                     </div>
 
-                    {/* Filter 2: Kelas pada Tahun Akademik tersebut */}
-                    <div className="lg:col-span-3 space-y-1.5">
-                        <label className="flex items-center justify-between text-xs font-extrabold text-slate-600">
-                            <span>الفصل الدراسي</span>
-                            <span className="text-[11px] font-bold text-slate-400 tabular-nums">
-                                {classesInYear.length} فصول
-                            </span>
-                        </label>
-                        <select
-                            value={selectedClassId}
-                            onChange={e => setSelectedClassId(e.target.value)}
-                            aria-label="الفصل الدراسي"
-                            className="w-full h-10.5 bg-slate-50/90 hover:bg-slate-100/80 focus:bg-white border border-slate-200/90 rounded-xl px-3.5 text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500/15 focus:border-[#064E3B] transition-all cursor-pointer"
-                        >
-                            <option value="ALL">جميع الفصول ({enrolledItems.length} طالب)</option>
-                            {classesInYear.map(c => (
-                                <option key={c.id} value={c.id}>
-                                    {c.name} — {normalizeGender(c.gender) === 'FEMALE' ? 'بنات' : 'بنين'} ({classStudentCounts[c.id] || 0})
-                                </option>
-                            ))}
-                        </select>
-                    </div>
+                    {/* Divider on Desktop */}
+                    <div className="hidden lg:block w-px h-6 bg-slate-200/90 shrink-0" />
 
-                    {/* Filter 3: Dropdown Pemilihan & Pencarian Mahasiswa (Di Atas) */}
-                    <div className="sm:col-span-2 lg:col-span-6 space-y-1.5 relative">
-                        <label className="flex items-center justify-between text-xs font-extrabold text-slate-600">
-                            <span>اختيار الطالب (بحث بالاسم أو الرقم الأكاديمي NIM)</span>
-                            <span className="text-[11px] font-bold text-[#064E3B] tabular-nums">
-                                {filteredEnrolledItems.length > 0
-                                    ? `${currentStudentIndex + 1} من ${filteredEnrolledItems.length} طالب`
-                                    : '0 طالب'}
-                            </span>
-                        </label>
+                    {/* Group 2: Student Searchable Picker + Prev/Next Icon Buttons */}
+                    <div className="flex items-center gap-1.5 flex-1 min-w-0 relative">
+                        <div className="relative flex-1 min-w-0">
+                            <button
+                                type="button"
+                                onClick={() => setStudentDropdownOpen(prev => !prev)}
+                                className={`w-full h-10 px-3 rounded-xl border text-right transition-all flex items-center justify-between gap-2 cursor-pointer ${
+                                    studentDropdownOpen
+                                        ? 'bg-white border-[#064E3B] ring-2 ring-emerald-500/15 shadow-sm'
+                                        : 'bg-white hover:bg-slate-50 border-slate-200/90 hover:border-slate-300'
+                                }`}
+                            >
+                                {selectedEnrolledItem ? (
+                                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                                        <svg className="w-4 h-4 text-[#064E3B] shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                                        </svg>
+                                        <span className="font-extrabold text-xs sm:text-sm text-slate-900 truncate">
+                                            {selectedEnrolledItem.student.name}
+                                        </span>
+                                        <span className="font-mono tabular-nums text-[11px] font-bold text-[#064E3B] bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200/60 shrink-0">
+                                            {selectedEnrolledItem.student.id}
+                                        </span>
+                                        <span className="hidden md:inline text-[11px] font-medium text-slate-400 truncate">
+                                            · {selectedEnrolledItem.classObj.name}
+                                        </span>
+                                    </div>
+                                ) : (
+                                    <div className="flex items-center gap-2 text-xs font-bold text-slate-400">
+                                        <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                                        </svg>
+                                        <span>اختر طالباً...</span>
+                                    </div>
+                                )}
 
-                        <div className="flex items-center gap-2">
-                            {/* Searchable Dropdown Trigger Button */}
-                            <div className="relative flex-1 min-w-0">
-                                <button
-                                    type="button"
-                                    onClick={() => setStudentDropdownOpen(prev => !prev)}
-                                    className={`w-full h-10.5 px-3.5 rounded-xl border text-right transition-all flex items-center justify-between gap-2 cursor-pointer ${
-                                        studentDropdownOpen
-                                            ? 'bg-white border-[#064E3B] ring-2 ring-emerald-500/15'
-                                            : 'bg-slate-50/90 hover:bg-slate-100/80 border-slate-200/90'
-                                    }`}
-                                >
-                                    {selectedEnrolledItem ? (
-                                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                                            <span className="w-6 h-6 rounded-lg bg-[#064E3B] text-white text-[11px] font-extrabold flex items-center justify-center shrink-0">
-                                                {selectedEnrolledItem.student.name.charAt(0)}
-                                            </span>
-                                            <span className="font-extrabold text-xs sm:text-sm text-slate-900 truncate">
-                                                {selectedEnrolledItem.student.name}
-                                            </span>
-                                            <span className="text-slate-300 shrink-0">·</span>
-                                            <span className="font-mono tabular-nums text-xs font-bold text-[#064E3B] shrink-0">
-                                                {selectedEnrolledItem.student.id}
-                                            </span>
-                                            <span className="hidden sm:inline text-[11px] text-slate-400 truncate">
-                                                ({selectedEnrolledItem.classObj.name})
-                                            </span>
-                                        </div>
-                                    ) : (
-                                        <span className="text-xs font-bold text-slate-400">
-                                            اختر طالباً من القائمة...
+                                <div className="flex items-center gap-2 shrink-0">
+                                    {filteredEnrolledItems.length > 0 && (
+                                        <span className="text-[10px] font-mono font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded tabular-nums">
+                                            {currentStudentIndex + 1}/{filteredEnrolledItems.length}
                                         </span>
                                     )}
-
                                     <svg
-                                        className={`w-4 h-4 text-slate-400 shrink-0 transition-transform duration-200 ${
+                                        className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 ${
                                             studentDropdownOpen ? 'rotate-180 text-[#064E3B]' : ''
                                         }`}
                                         fill="none"
                                         viewBox="0 0 24 24"
                                         stroke="currentColor"
                                     >
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M19 9l-7 7-7-7" />
                                     </svg>
-                                </button>
+                                </div>
+                            </button>
 
-                                {/* Floating Searchable Student Dropdown Popover */}
-                                {studentDropdownOpen && (
-                                    <>
-                                        <div
-                                            className="fixed inset-0 z-30"
-                                            onClick={() => setStudentDropdownOpen(false)}
-                                        />
-                                        <div className="absolute right-0 left-0 top-12 z-40 bg-white rounded-2xl border border-slate-200 shadow-xl overflow-hidden animate-fade-in">
-                                            {/* Search Input Inside Dropdown */}
-                                            <div className="p-2.5 bg-slate-50/80 border-b border-slate-100">
-                                                <div className="relative">
-                                                    <input
-                                                        type="text"
-                                                        autoFocus
-                                                        placeholder="ابحث باسم الطالب أو الرقم الأكاديمي (NIM)..."
-                                                        value={searchTerm}
-                                                        onChange={e => setSearchTerm(e.target.value)}
-                                                        className="w-full h-9 pl-8 pr-9 bg-white border border-slate-200/90 rounded-xl text-xs font-bold text-slate-800 outline-none focus:border-[#064E3B] focus:ring-2 focus:ring-emerald-500/15 transition-all"
-                                                    />
-                                                    <svg
-                                                        className="absolute right-3 top-2.5 w-4 h-4 text-slate-400 pointer-events-none"
-                                                        fill="none"
-                                                        viewBox="0 0 24 24"
-                                                        stroke="currentColor"
+                            {/* Floating Searchable Student Dropdown Popover */}
+                            {studentDropdownOpen && (
+                                <>
+                                    <div
+                                        className="fixed inset-0 z-30"
+                                        onClick={() => setStudentDropdownOpen(false)}
+                                    />
+                                    <div className="absolute right-0 left-0 top-11 z-40 bg-white rounded-2xl border border-slate-200 shadow-xl overflow-hidden animate-fade-in">
+                                        <div className="p-2.5 bg-slate-50/90 border-b border-slate-100">
+                                            <div className="relative">
+                                                <input
+                                                    type="text"
+                                                    autoFocus
+                                                    placeholder="بحث بالاسم أو الرقم الأكاديمي (NIM)..."
+                                                    value={searchTerm}
+                                                    onChange={e => setSearchTerm(e.target.value)}
+                                                    className="w-full h-9 pl-8 pr-9 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:border-[#064E3B] focus:ring-2 focus:ring-emerald-500/15 transition-all"
+                                                />
+                                                <svg
+                                                    className="absolute right-3 top-2.5 w-4 h-4 text-slate-400 pointer-events-none"
+                                                    fill="none"
+                                                    viewBox="0 0 24 24"
+                                                    stroke="currentColor"
+                                                >
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                                                </svg>
+                                                {searchTerm && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setSearchTerm('')}
+                                                        className="absolute left-2.5 top-2 w-5 h-5 rounded-full text-slate-400 hover:text-red-600 flex items-center justify-center cursor-pointer"
+                                                        title="مسح"
                                                     >
-                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                                                    </svg>
-                                                    {searchTerm && (
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => setSearchTerm('')}
-                                                            className="absolute left-2.5 top-2 w-5 h-5 rounded-full text-slate-400 hover:text-red-600 flex items-center justify-center cursor-pointer"
-                                                            title="مسح البحث"
-                                                        >
-                                                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                                                            </svg>
-                                                        </button>
-                                                    )}
-                                                </div>
-                                            </div>
-
-                                            {/* Student Options List */}
-                                            <div className="max-h-64 overflow-y-auto divide-y divide-slate-100/70 custom-scrollbar p-1.5">
-                                                {filteredEnrolledItems.map(item => {
-                                                    const isSelected = selectedStudentId === item.student.id;
-                                                    return (
-                                                        <button
-                                                            key={item.student.id}
-                                                            type="button"
-                                                            onClick={() => {
-                                                                setSelectedStudentId(item.student.id);
-                                                                setStudentDropdownOpen(false);
-                                                            }}
-                                                            className={`w-full px-3 py-2.5 rounded-xl text-right transition-colors flex items-center justify-between gap-3 cursor-pointer ${
-                                                                isSelected
-                                                                    ? 'bg-emerald-50/90 text-[#064E3B]'
-                                                                    : 'hover:bg-slate-50 text-slate-800'
-                                                            }`}
-                                                        >
-                                                            <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                                                                <span
-                                                                    className={`w-7 h-7 rounded-lg text-xs font-extrabold flex items-center justify-center shrink-0 ${
-                                                                        isSelected
-                                                                            ? 'bg-[#064E3B] text-white'
-                                                                            : 'bg-slate-100 text-slate-600'
-                                                                    }`}
-                                                                >
-                                                                    {item.student.name.charAt(0)}
-                                                                </span>
-                                                                <div className="min-w-0 flex-1">
-                                                                    <div className="flex items-center gap-2">
-                                                                        <span className="font-extrabold text-xs sm:text-sm truncate">
-                                                                            {item.student.name}
-                                                                        </span>
-                                                                        {item.hasRepeatedClass && (
-                                                                            <span className="text-[10px] font-bold text-amber-700">
-                                                                                · معيد
-                                                                            </span>
-                                                                        )}
-                                                                    </div>
-                                                                    <div className="flex items-center gap-1.5 text-[11px] text-slate-400 mt-0.5">
-                                                                        <span className="font-mono tabular-nums text-slate-600 font-bold">
-                                                                            {item.student.id}
-                                                                        </span>
-                                                                        <span>·</span>
-                                                                        <span className="truncate">{item.classObj.name}</span>
-                                                                        <span>·</span>
-                                                                        <span className="text-[#064E3B] font-bold tabular-nums">
-                                                                            {item.totalAcademicYearsCount} أعوام
-                                                                        </span>
-                                                                    </div>
-                                                                </div>
-                                                            </div>
-
-                                                            {isSelected && (
-                                                                <svg className="w-4 h-4 text-[#064E3B] shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-                                                                </svg>
-                                                            )}
-                                                        </button>
-                                                    );
-                                                })}
-
-                                                {filteredEnrolledItems.length === 0 && (
-                                                    <div className="py-8 text-center text-slate-400 text-xs font-bold">
-                                                        لا يوجد طلاب مطابقون للبحث
-                                                    </div>
+                                                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                                        </svg>
+                                                    </button>
                                                 )}
                                             </div>
                                         </div>
-                                    </>
-                                )}
-                            </div>
 
-                            {/* Prev / Next Student Quick Navigation Buttons */}
-                            <div className="flex items-center gap-1 shrink-0">
-                                <button
-                                    type="button"
-                                    onClick={handlePrevStudent}
-                                    disabled={currentStudentIndex <= 0}
-                                    className="w-10.5 h-10.5 rounded-xl bg-slate-50 hover:bg-emerald-50 text-slate-600 hover:text-[#064E3B] border border-slate-200/90 flex items-center justify-center disabled:opacity-35 disabled:pointer-events-none transition-all cursor-pointer"
-                                    title="الطالب السابق"
-                                    aria-label="الطالب السابق"
-                                >
-                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M9 5l7 7-7 7" />
-                                    </svg>
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={handleNextStudent}
-                                    disabled={currentStudentIndex < 0 || currentStudentIndex >= filteredEnrolledItems.length - 1}
-                                    className="w-10.5 h-10.5 rounded-xl bg-slate-50 hover:bg-emerald-50 text-slate-600 hover:text-[#064E3B] border border-slate-200/90 flex items-center justify-center disabled:opacity-35 disabled:pointer-events-none transition-all cursor-pointer"
-                                    title="الطالب التالي"
-                                    aria-label="الطالب التالي"
-                                >
-                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M15 19l-7-7 7-7" />
-                                    </svg>
-                                </button>
-                            </div>
+                                        <div className="max-h-64 overflow-y-auto divide-y divide-slate-100/80 custom-scrollbar p-1.5">
+                                            {filteredEnrolledItems.map(item => {
+                                                const isSelected = selectedStudentId === item.student.id;
+                                                return (
+                                                    <button
+                                                        key={item.student.id}
+                                                        type="button"
+                                                        onClick={() => {
+                                                            setSelectedStudentId(item.student.id);
+                                                            setStudentDropdownOpen(false);
+                                                        }}
+                                                        className={`w-full px-3 py-2 rounded-xl text-right transition-colors flex items-center justify-between gap-2.5 cursor-pointer ${
+                                                            isSelected
+                                                                ? 'bg-emerald-50/90 text-[#064E3B]'
+                                                                : 'hover:bg-slate-50 text-slate-800'
+                                                        }`}
+                                                    >
+                                                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                                            <span
+                                                                className={`w-7 h-7 rounded-lg text-xs font-extrabold flex items-center justify-center shrink-0 ${
+                                                                    isSelected
+                                                                        ? 'bg-[#064E3B] text-white'
+                                                                        : 'bg-slate-100 text-slate-600'
+                                                                }`}
+                                                            >
+                                                                {item.student.name.charAt(0)}
+                                                            </span>
+                                                            <div className="min-w-0 flex-1">
+                                                                <div className="flex items-center gap-1.5">
+                                                                    <span className="font-extrabold text-xs truncate">
+                                                                        {item.student.name}
+                                                                    </span>
+                                                                    {item.hasRepeatedClass && (
+                                                                        <span className="text-[9px] font-bold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200/70">
+                                                                            معيد
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                                <div className="flex items-center gap-1.5 text-[10px] text-slate-400 mt-0.5">
+                                                                    <span className="font-mono tabular-nums text-slate-600 font-bold">
+                                                                        {item.student.id}
+                                                                    </span>
+                                                                    <span>·</span>
+                                                                    <span className="truncate">{item.classObj.name}</span>
+                                                                    <span>·</span>
+                                                                    <span className="text-[#064E3B] font-bold tabular-nums">
+                                                                        {item.totalAcademicYearsCount} أعوام
+                                                                    </span>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+
+                                                        {isSelected && (
+                                                            <svg className="w-4 h-4 text-[#064E3B] shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                                                            </svg>
+                                                        )}
+                                                    </button>
+                                                );
+                                            })}
+
+                                            {filteredEnrolledItems.length === 0 && (
+                                                <div className="py-6 text-center text-slate-400 text-xs font-bold">
+                                                    لا يوجد طلاب مطابقون للبحث
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                </>
+                            )}
+                        </div>
+
+                        {/* Icon-Only Prev / Next Navigation */}
+                        <div className="flex items-center gap-1 shrink-0">
+                            <button
+                                type="button"
+                                onClick={handlePrevStudent}
+                                disabled={currentStudentIndex <= 0}
+                                className="w-10 h-10 rounded-xl bg-white hover:bg-emerald-50 text-slate-600 hover:text-[#064E3B] border border-slate-200/90 hover:border-emerald-300 flex items-center justify-center disabled:opacity-35 disabled:pointer-events-none transition-all cursor-pointer"
+                                title="الطالب السابق"
+                                aria-label="الطالب السابق"
+                            >
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M9 5l7 7-7 7" />
+                                </svg>
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handleNextStudent}
+                                disabled={currentStudentIndex < 0 || currentStudentIndex >= filteredEnrolledItems.length - 1}
+                                className="w-10 h-10 rounded-xl bg-white hover:bg-emerald-50 text-slate-600 hover:text-[#064E3B] border border-slate-200/90 hover:border-emerald-300 flex items-center justify-center disabled:opacity-35 disabled:pointer-events-none transition-all cursor-pointer"
+                                title="الطالب التالي"
+                                aria-label="الطالب التالي"
+                            >
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M15 19l-7-7 7-7" />
+                                </svg>
+                            </button>
                         </div>
                     </div>
                 </div>
             </div>
 
             {/* ===================================================================== */}
-            {/* 2. FULL-WIDTH ACADEMIC RECORD CARD (100% LEBAR DARI KANAN KE KIRI)     */}
+            {/* 2. STUDENT SUMMARY STRIP & ICON-FIRST ACTION BAR                      */}
             {/* ===================================================================== */}
-            <div className="w-full bg-white border border-slate-200/80 rounded-2xl shadow-2xs overflow-hidden">
-                {!selectedEnrolledItem ? (
-                    <div className="py-20 px-4 text-center text-slate-400">
-                        <svg className="w-12 h-12 mx-auto mb-3 opacity-25 text-[#064E3B]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 14l9-5-9-5-9 5 9 5zm0 0l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14z" />
-                        </svg>
-                        <p className="text-sm font-extrabold text-slate-500">
-                            اختر طالباً من القائمة المنسدلة أعلاه لعرض كشف الدرجات أو السجل التاريخي
-                        </p>
-                    </div>
-                ) : (
-                    <div className="flex flex-col">
-                        {/* ================================================================= */}
-                        {/* ELEGANT UNIFIED STUDENT HEADER & MODE SWITCHER                    */}
-                        {/* ================================================================= */}
-                        <div className="p-4 sm:p-6 bg-gradient-to-l from-emerald-950/[0.03] via-slate-50/50 to-white border-b border-slate-200/80 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                            {/* Identitas Mahasiswa (Sesuai Poin 2: Nama, NIM, Total Tahun Akademik) */}
-                            <div className="flex items-start sm:items-center gap-3.5 min-w-0">
-                                <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-[#064E3B] text-white font-extrabold text-base sm:text-lg flex items-center justify-center shrink-0 shadow-xs">
-                                    {(academicHistory?.student.name || selectedEnrolledItem.student.name).charAt(0)}
-                                </div>
-
-                                <div className="min-w-0 flex-1">
-                                    <div className="flex items-center gap-2 flex-wrap">
-                                        <h3 className="text-base sm:text-lg font-extrabold text-slate-900 tracking-tight">
-                                            {academicHistory?.student.name || selectedEnrolledItem.student.name}
-                                        </h3>
-                                        <span className="text-slate-300">·</span>
-                                        <span className="text-xs sm:text-sm font-bold text-[#064E3B]">
-                                            {activeView === 'YEAR_KHS'
-                                                ? `كشف درجات العام الدراسي (${currentYearName})`
-                                                : 'سجل التاريخ الأكاديمي الشامل'}
-                                        </span>
-                                    </div>
-
-                                    <div className="flex items-center gap-x-3 gap-y-1 text-xs text-slate-500 mt-1 flex-wrap">
-                                        <span>
-                                            الرقم الأكاديمي (NIM):{' '}
-                                            <strong className="font-mono tabular-nums font-extrabold text-slate-800">
-                                                {academicHistory?.student.id || selectedEnrolledItem.student.id}
-                                            </strong>
-                                        </span>
-                                        <span className="text-slate-300">·</span>
-                                        <span>
-                                            الفصل الحالي:{' '}
-                                            <strong className="font-extrabold text-slate-800">
-                                                {selectedEnrolledItem.classObj.name}
-                                            </strong>
-                                        </span>
-                                        <span className="text-slate-300">·</span>
-                                        <span>
-                                            إجمالي الأعوام الدراسية بالجامعة:{' '}
-                                            <strong className="font-extrabold text-[#064E3B] tabular-nums">
-                                                {academicHistory?.totalAcademicYears ?? selectedEnrolledItem.totalAcademicYearsCount}{' '}
-                                                {(academicHistory?.totalAcademicYears ?? selectedEnrolledItem.totalAcademicYearsCount) === 1
-                                                    ? 'عام دراسي'
-                                                    : 'أعوام دراسية'}
-                                            </strong>
-                                        </span>
-                                    </div>
-                                </div>
+            {!selectedEnrolledItem ? (
+                <div className="py-16 px-4 text-center text-slate-400">
+                    <svg className="w-10 h-10 mx-auto mb-2.5 opacity-25 text-[#064E3B]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 14l9-5-9-5-9 5 9 5zm0 0l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14z" />
+                    </svg>
+                    <p className="text-xs font-extrabold text-slate-500">
+                        اختر طالباً لعرض السجل الأكاديمي
+                    </p>
+                </div>
+            ) : (
+                <div className="flex flex-col">
+                    {/* Compact Student Identity + Mode Switcher + Icon Actions */}
+                    <div className="px-3.5 py-3 sm:px-5 sm:py-3.5 bg-white border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
+                        {/* Right: Student Avatar + Name + Compact Metadata Pills */}
+                        <div className="flex items-center gap-2.5 min-w-0">
+                            <div className="w-9 h-9 rounded-xl bg-[#064E3B] text-white font-extrabold text-sm flex items-center justify-center shrink-0">
+                                {(academicHistory?.student.name || selectedEnrolledItem.student.name).charAt(0)}
                             </div>
 
-                            {/* Mode Switcher & Contextual Action Buttons */}
-                            <div className="flex flex-wrap items-center justify-between sm:justify-end gap-2.5 shrink-0">
-                                {/* Segmented Switcher: KHS Tahun Akademik vs Riwayat Nilai Akademik */}
-                                <div className="bg-slate-100/90 p-1 rounded-xl flex items-center gap-1 border border-slate-200/60">
-                                    <button
-                                        type="button"
-                                        onClick={() => setActiveView('YEAR_KHS')}
-                                        className={`px-3.5 py-2 rounded-lg text-xs font-extrabold transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
-                                            activeView === 'YEAR_KHS'
-                                                ? 'bg-[#064E3B] text-white shadow-2xs'
-                                                : 'text-slate-600 hover:text-slate-900'
-                                        }`}
-                                    >
-                                        <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                                        </svg>
-                                        <span>كشف العام الدراسي</span>
-                                    </button>
-
-                                    <button
-                                        type="button"
-                                        onClick={() => setActiveView('HISTORY')}
-                                        className={`px-3.5 py-2 rounded-lg text-xs font-extrabold transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
-                                            activeView === 'HISTORY'
-                                                ? 'bg-[#064E3B] text-white shadow-2xs'
-                                                : 'text-slate-600 hover:text-slate-900'
-                                        }`}
-                                    >
-                                        <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                        </svg>
-                                        <span>سجل التاريخ الأكاديمي</span>
-                                    </button>
+                            <div className="min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                    <h3 className="text-sm sm:text-base font-extrabold text-slate-900 truncate">
+                                        {academicHistory?.student.name || selectedEnrolledItem.student.name}
+                                    </h3>
+                                    <span className="font-mono tabular-nums text-[11px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md">
+                                        {academicHistory?.student.id || selectedEnrolledItem.student.id}
+                                    </span>
                                 </div>
 
-                                {/* Contextual Actions */}
-                                {activeView === 'YEAR_KHS' ? (
-                                    <div className="relative">
-                                        <button
-                                            type="button"
-                                            onClick={() => setShowDownloadMenu(prev => !prev)}
-                                            disabled={downloadingPdf !== null || yearGrades.length === 0}
-                                            className="h-10 px-3.5 rounded-xl bg-[#064E3B] text-white hover:bg-emerald-900 active:scale-95 transition-all shadow-2xs disabled:opacity-40 flex items-center gap-2 text-xs font-extrabold cursor-pointer"
-                                            title="تحميل كشف الدرجات (PDF)"
-                                        >
-                                            {downloadingPdf !== null ? (
-                                                <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                                                </svg>
-                                            ) : (
-                                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                                                </svg>
-                                            )}
-                                            <span className="hidden sm:inline">تحميل PDF</span>
-                                        </button>
-
-                                        {showDownloadMenu && (
-                                            <>
-                                                <div
-                                                    className="fixed inset-0 bg-slate-900/40 backdrop-blur-[1px] z-40 sm:bg-transparent sm:backdrop-blur-none"
-                                                    onClick={() => setShowDownloadMenu(false)}
-                                                />
-                                                <div className="fixed bottom-0 inset-x-0 z-50 bg-white rounded-t-2xl p-4 pb-6 shadow-2xl border-t border-slate-200 sm:absolute sm:bottom-auto sm:inset-x-auto sm:left-0 sm:top-11 sm:w-60 sm:rounded-xl sm:p-2 sm:shadow-xl sm:border animate-fade-in">
-                                                    <div className="px-2.5 py-1.5 border-b border-slate-100 text-xs font-extrabold text-slate-800">
-                                                        تحميل كشف الدرجات ({currentYearName})
-                                                    </div>
-                                                    <div className="mt-1 space-y-1">
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => handleDownloadStudentPdf('SEM1')}
-                                                            className="w-full px-3 py-2 rounded-lg text-right text-xs font-bold text-slate-700 hover:bg-emerald-50 hover:text-[#064E3B] flex items-center justify-between cursor-pointer"
-                                                        >
-                                                            <span>الفصل الدراسي الأول</span>
-                                                            <span className="text-[11px] font-mono text-slate-400">ف 1</span>
-                                                        </button>
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => handleDownloadStudentPdf('SEM2')}
-                                                            className="w-full px-3 py-2 rounded-lg text-right text-xs font-bold text-slate-700 hover:bg-emerald-50 hover:text-[#064E3B] flex items-center justify-between cursor-pointer"
-                                                        >
-                                                            <span>الفصل الدراسي الثاني</span>
-                                                            <span className="text-[11px] font-mono text-slate-400">ف 2</span>
-                                                        </button>
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => handleDownloadStudentPdf('YEARLY')}
-                                                            className="w-full px-3 py-2 rounded-lg text-right text-xs font-extrabold text-[#064E3B] bg-emerald-50/70 hover:bg-[#064E3B] hover:text-white flex items-center justify-between cursor-pointer"
-                                                        >
-                                                            <span>السنة الدراسية الكاملة</span>
-                                                            <span className="text-[11px] font-mono">1 + 2</span>
-                                                        </button>
-                                                    </div>
-                                                </div>
-                                            </>
-                                        )}
-                                    </div>
-                                ) : (
-                                    <div className="flex items-center gap-2">
-                                        <button
-                                            type="button"
-                                            onClick={() => setShowSemesterBreakdown(prev => !prev)}
-                                            className={`h-10 px-3.5 rounded-xl text-xs font-extrabold border transition-all cursor-pointer ${
-                                                showSemesterBreakdown
-                                                    ? 'bg-emerald-50 text-[#064E3B] border-emerald-300'
-                                                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-                                            }`}
-                                            title="إظهار أو إخفاء تفصيل الفصل الأول والثاني"
-                                        >
-                                            {showSemesterBreakdown ? 'إخفاء تفصيل (ف1/ف2)' : 'تفصيل (ف1 / ف2)'}
-                                        </button>
-
-                                        <button
-                                            type="button"
-                                            onClick={handleExportHistoryExcel}
-                                            disabled={!academicHistory || academicHistory.subjectRows.length === 0}
-                                            className="h-10 px-3.5 rounded-xl bg-[#064E3B] hover:bg-emerald-900 text-white text-xs font-extrabold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-40 shadow-2xs"
-                                            title="تصدير السجل التاريخي إلى Excel"
-                                        >
-                                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                                            </svg>
-                                            <span>تصدير Excel</span>
-                                        </button>
-                                    </div>
-                                )}
+                                <div className="flex items-center gap-2 text-[11px] text-slate-500 mt-0.5 flex-wrap">
+                                    <span className="font-bold text-slate-700">
+                                        {selectedEnrolledItem.classObj.name}
+                                    </span>
+                                    <span className="text-slate-300">•</span>
+                                    <span className="text-[#064E3B] font-extrabold tabular-nums" title="إجمالي الأعوام الدراسية بالجامعة">
+                                        {academicHistory?.totalAcademicYears ?? selectedEnrolledItem.totalAcademicYearsCount}{' '}
+                                        {(academicHistory?.totalAcademicYears ?? selectedEnrolledItem.totalAcademicYearsCount) === 1
+                                            ? 'عام دراسي'
+                                            : 'أعوام دراسية'}
+                                    </span>
+                                </div>
                             </div>
                         </div>
 
-                        {/* ================================================================= */}
-                        {/* BODY TABEL FULL-WIDTH (KHS TAHUN AKADEMIK ATAU RIWAYAT AKADEMIK)  */}
-                        {/* ================================================================= */}
-                        {activeView === 'YEAR_KHS' ? (
-                            loadingYearKhs ? (
-                                <div className="py-16 flex flex-col items-center justify-center">
-                                    <div className="w-8 h-8 border-2 border-emerald-100 border-t-[#064E3B] rounded-full animate-spin mb-2.5"></div>
-                                    <p className="text-slate-400 text-xs font-bold">جاري تحميل كشف درجات عام {currentYearName}...</p>
+                        {/* Left: Concise View Switcher + Icon-Only Actions */}
+                        <div className="flex items-center gap-2 shrink-0 mr-auto sm:mr-0">
+                            {/* Concise Segmented Switcher */}
+                            <div className="bg-slate-100 p-0.5 rounded-xl flex items-center border border-slate-200/70">
+                                <button
+                                    type="button"
+                                    onClick={() => setActiveView('YEAR_KHS')}
+                                    className={`h-8 px-3 rounded-lg text-xs font-extrabold transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+                                        activeView === 'YEAR_KHS'
+                                            ? 'bg-[#064E3B] text-white shadow-sm'
+                                            : 'text-slate-600 hover:text-slate-900'
+                                    }`}
+                                    title="كشف درجات العام الدراسي"
+                                >
+                                    <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                    </svg>
+                                    <span>كشف العام</span>
+                                </button>
+
+                                <button
+                                    type="button"
+                                    onClick={() => setActiveView('HISTORY')}
+                                    className={`h-8 px-3 rounded-lg text-xs font-extrabold transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+                                        activeView === 'HISTORY'
+                                            ? 'bg-[#064E3B] text-white shadow-sm'
+                                            : 'text-slate-600 hover:text-slate-900'
+                                    }`}
+                                    title="سجل التاريخ الأكاديمي الشامل"
+                                >
+                                    <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                    </svg>
+                                    <span>السجل التراكمي</span>
+                                </button>
+                            </div>
+
+                            {/* Icon-Only Contextual Actions */}
+                            {activeView === 'YEAR_KHS' ? (
+                                <div className="relative">
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowDownloadMenu(prev => !prev)}
+                                        disabled={downloadingPdf !== null || yearGrades.length === 0}
+                                        className="w-9 h-9 rounded-xl bg-[#064E3B] text-white hover:bg-emerald-900 active:scale-95 transition-all shadow-sm disabled:opacity-40 flex items-center justify-center cursor-pointer"
+                                        title="تحميل PDF"
+                                        aria-label="تحميل PDF"
+                                    >
+                                        {downloadingPdf !== null ? (
+                                            <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                            </svg>
+                                        ) : (
+                                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                                            </svg>
+                                        )}
+                                    </button>
+
+                                    {showDownloadMenu && (
+                                        <>
+                                            <div
+                                                className="fixed inset-0 bg-slate-900/40 backdrop-blur-[1px] z-40 sm:bg-transparent sm:backdrop-blur-none"
+                                                onClick={() => setShowDownloadMenu(false)}
+                                            />
+                                            <div className="fixed bottom-0 inset-x-0 z-50 bg-white rounded-t-2xl p-4 pb-6 shadow-2xl border-t border-slate-200 sm:absolute sm:bottom-auto sm:inset-x-auto sm:left-0 sm:top-11 sm:w-52 sm:rounded-xl sm:p-1.5 sm:shadow-xl sm:border animate-fade-in">
+                                                <div className="px-2.5 py-1.5 border-b border-slate-100 text-[11px] font-extrabold text-slate-500">
+                                                    تحميل PDF ({currentYearName})
+                                                </div>
+                                                <div className="mt-1 space-y-0.5">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleDownloadStudentPdf('SEM1')}
+                                                        className="w-full px-2.5 py-2 rounded-lg text-right text-xs font-bold text-slate-700 hover:bg-emerald-50 hover:text-[#064E3B] flex items-center justify-between cursor-pointer"
+                                                    >
+                                                        <span>الفصل الأول</span>
+                                                        <span className="text-[10px] font-mono text-slate-400">ف 1</span>
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleDownloadStudentPdf('SEM2')}
+                                                        className="w-full px-2.5 py-2 rounded-lg text-right text-xs font-bold text-slate-700 hover:bg-emerald-50 hover:text-[#064E3B] flex items-center justify-between cursor-pointer"
+                                                    >
+                                                        <span>الفصل الثاني</span>
+                                                        <span className="text-[10px] font-mono text-slate-400">ف 2</span>
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleDownloadStudentPdf('YEARLY')}
+                                                        className="w-full px-2.5 py-2 rounded-lg text-right text-xs font-extrabold text-[#064E3B] bg-emerald-50/70 hover:bg-[#064E3B] hover:text-white flex items-center justify-between cursor-pointer"
+                                                    >
+                                                        <span>العام الكامل</span>
+                                                        <span className="text-[10px] font-mono">1 + 2</span>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </>
+                                    )}
                                 </div>
-                            ) : yearGrades.length > 0 ? (
+                            ) : (
+                                <div className="flex items-center gap-1.5">
+                                    {/* Icon Button: Toggle Semester Breakdown (ف1 / ف2) */}
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowSemesterBreakdown(prev => !prev)}
+                                        className={`w-9 h-9 rounded-xl border transition-all flex items-center justify-center cursor-pointer ${
+                                            showSemesterBreakdown
+                                                ? 'bg-emerald-50 text-[#064E3B] border-emerald-300'
+                                                : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50 hover:text-slate-800'
+                                        }`}
+                                        title={showSemesterBreakdown ? 'إخفاء تفصيل (ف1 / ف2)' : 'إظهار تفصيل (ف1 / ف2)'}
+                                        aria-label="تفصيل الفصول"
+                                    >
+                                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16m-7 6h7" />
+                                        </svg>
+                                    </button>
+
+                                    {/* Icon Button: Export Excel */}
+                                    <button
+                                        type="button"
+                                        onClick={handleExportHistoryExcel}
+                                        disabled={!academicHistory || academicHistory.subjectRows.length === 0}
+                                        className="w-9 h-9 rounded-xl bg-[#064E3B] hover:bg-emerald-900 text-white transition-all flex items-center justify-center cursor-pointer disabled:opacity-40 shadow-sm"
+                                        title="تصدير Excel"
+                                        aria-label="تصدير Excel"
+                                    >
+                                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                                        </svg>
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* ================================================================= */}
+                    {/* 3. PROPORTIONAL, COMPACT, CLEAN DATA TABLES                       */}
+                    {/* ================================================================= */}
+                    {activeView === 'YEAR_KHS' ? (
+                        loadingYearKhs ? (
+                            <div className="py-14 flex flex-col items-center justify-center">
+                                <div className="w-7 h-7 border-2 border-emerald-100 border-t-[#064E3B] rounded-full animate-spin mb-2"></div>
+                                <p className="text-slate-400 text-xs font-bold">جاري التحميل...</p>
+                            </div>
+                        ) : yearGrades.length > 0 ? (
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-xs text-right border-collapse">
+                                    <thead className="bg-slate-50/90 text-slate-500 font-extrabold border-b border-slate-200/80 text-[11px]">
+                                        <tr>
+                                            <th className="py-2.5 px-3 w-10 text-center">#</th>
+                                            <th className="py-2.5 px-3.5">المقرر</th>
+                                            <th className="py-2.5 px-3 hidden sm:table-cell">المحاضر</th>
+                                            <th className="py-2.5 px-2.5 text-center w-16 sm:w-20">ف 1</th>
+                                            <th className="py-2.5 px-2.5 text-center w-16 sm:w-20">ف 2</th>
+                                            <th className="py-2.5 px-2.5 text-center w-20 sm:w-24 bg-emerald-50/50 text-[#064E3B]">المعدل</th>
+                                            <th className="py-2.5 px-3 text-center w-24 sm:w-28">التقدير</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100">
+                                        {yearGrades.map((g, idx) => {
+                                            const hasAny = Boolean(g.hasSem1 || g.hasSem2);
+                                            const rowAvg =
+                                                g.hasSem1 && g.hasSem2
+                                                    ? (g.sem1_total + g.sem2_total) / 2
+                                                    : g.hasSem1 && !g.hasSem2
+                                                    ? g.status === GradeStatus.PUBLISHED
+                                                        ? (g.sem1_total + g.sem2_total) / 2
+                                                        : g.sem1_total
+                                                    : !g.hasSem1 && g.hasSem2
+                                                    ? g.status === GradeStatus.PUBLISHED
+                                                        ? (g.sem1_total + g.sem2_total) / 2
+                                                        : g.sem2_total
+                                                    : null;
+                                            const pred = getAcademicPredicate(rowAvg);
+
+                                            return (
+                                                <tr key={idx} className="hover:bg-slate-50/70 transition-colors">
+                                                    <td className="py-2.5 px-3 text-center text-slate-400 font-mono tabular-nums text-[11px]">
+                                                        {idx + 1}
+                                                    </td>
+                                                    <td className="py-2.5 px-3.5">
+                                                        <span className="font-extrabold text-slate-900 text-xs sm:text-sm">
+                                                            {g.subjectName}
+                                                        </span>
+                                                        <div className="sm:hidden text-[10px] text-slate-400 mt-0.5 truncate">
+                                                            {g.lecturerName}
+                                                        </div>
+                                                    </td>
+                                                    <td className="py-2.5 px-3 text-slate-500 text-xs font-medium hidden sm:table-cell truncate max-w-[180px]">
+                                                        {g.lecturerName}
+                                                    </td>
+                                                    <td className="py-2.5 px-2.5 text-center tabular-nums font-bold">
+                                                        {g.hasSem1 ? (
+                                                            <span className={g.sem1_total < 60 ? 'text-red-600 font-extrabold' : 'text-slate-700'}>
+                                                                {formatAcademicScore(g.sem1_total, 1)}
+                                                            </span>
+                                                        ) : (
+                                                            <span className="text-slate-300">—</span>
+                                                        )}
+                                                    </td>
+                                                    <td className="py-2.5 px-2.5 text-center tabular-nums font-bold">
+                                                        {g.hasSem2 ? (
+                                                            <span className={g.sem2_total < 60 ? 'text-red-600 font-extrabold' : 'text-slate-700'}>
+                                                                {formatAcademicScore(g.sem2_total, 1)}
+                                                            </span>
+                                                        ) : (
+                                                            <span className="text-slate-300">—</span>
+                                                        )}
+                                                    </td>
+                                                    <td className="py-2.5 px-2.5 text-center bg-emerald-50/25 font-extrabold tabular-nums">
+                                                        {hasAny && rowAvg !== null ? (
+                                                            <span className={rowAvg < 60 ? 'text-red-600' : 'text-[#064E3B]'}>
+                                                                {formatAcademicScore(rowAvg, 1)}
+                                                            </span>
+                                                        ) : (
+                                                            <span className="text-slate-300">—</span>
+                                                        )}
+                                                    </td>
+                                                    <td className="py-2.5 px-3 text-center text-[11px] font-extrabold">
+                                                        {hasAny && rowAvg !== null ? (
+                                                            <span
+                                                                className={`inline-block px-2 py-0.5 rounded-md ${
+                                                                    rowAvg < 60
+                                                                        ? 'bg-red-50 text-red-600 border border-red-200/60'
+                                                                        : 'bg-emerald-50/80 text-[#064E3B] border border-emerald-200/60'
+                                                                }`}
+                                                            >
+                                                                {pred}
+                                                            </span>
+                                                        ) : (
+                                                            <span className="text-slate-300 font-normal">—</span>
+                                                        )}
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                    <tfoot>
+                                        <tr className="bg-slate-50 border-t-2 border-slate-200 font-extrabold text-slate-900 text-xs">
+                                            <td colSpan={2} className="py-3 px-3.5 text-right text-[#064E3B] sm:hidden">
+                                                المعدل السنوي ({currentYearName})
+                                            </td>
+                                            <td colSpan={3} className="py-3 px-3.5 text-right text-[#064E3B] hidden sm:table-cell">
+                                                المعدل السنوي ({currentYearName})
+                                            </td>
+                                            <td className="py-3 px-2.5 text-center tabular-nums text-slate-700">
+                                                {formatAcademicScore(yearKhsStats.sem1Avg, 1)}
+                                            </td>
+                                            <td className="py-3 px-2.5 text-center tabular-nums text-slate-700">
+                                                {formatAcademicScore(yearKhsStats.sem2Avg, 1)}
+                                            </td>
+                                            <td className="py-3 px-2.5 text-center tabular-nums text-sm text-[#064E3B] bg-emerald-100/60">
+                                                {formatAcademicScore(yearKhsStats.yearlyAvg, 2)}
+                                            </td>
+                                            <td className="py-3 px-3 text-center text-xs text-[#064E3B]">
+                                                {yearKhsStats.predicate}
+                                            </td>
+                                        </tr>
+                                    </tfoot>
+                                </table>
+                            </div>
+                        ) : (
+                            <div className="py-14 text-center text-slate-400 text-xs font-bold">
+                                لا توجد مقررات مسجلة في عام {currentYearName}
+                            </div>
+                        )
+                    ) : (
+                        /* ============================================================= */
+                        /* TABEL DINAMIS RIWAYAT NILAI AKADEMIK MAHASISWA                */
+                        /* ============================================================= */
+                        <div className="flex flex-col">
+                            {academicHistory && academicHistory.repeatCount > 0 && (
+                                <div className="px-4 py-2 bg-amber-50/70 border-b border-amber-200/70 text-[11px] text-amber-900 flex items-center gap-2">
+                                    <svg className="w-3.5 h-3.5 text-amber-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                    </svg>
+                                    <span>
+                                        العام الموسوم بـ <strong className="text-red-700">معيد</strong> سجل تاريخي فقط (مشطوب) ولا يدخل في المعدل.
+                                    </span>
+                                </div>
+                            )}
+
+                            {loadingHistory ? (
+                                <div className="py-14 flex flex-col items-center justify-center">
+                                    <div className="w-7 h-7 border-2 border-emerald-100 border-t-[#064E3B] rounded-full animate-spin mb-2"></div>
+                                    <p className="text-slate-400 text-xs font-bold">جاري التحميل...</p>
+                                </div>
+                            ) : academicHistory && academicHistory.subjectRows.length > 0 ? (
                                 <div className="overflow-x-auto">
-                                    <table className="w-full min-w-[600px] text-xs sm:text-sm text-right border-collapse">
-                                        <thead className="bg-slate-50/90 text-slate-600 font-extrabold border-b border-slate-200/80 text-xs">
-                                            <tr>
-                                                <th className="py-3.5 px-4 w-12 text-center">#</th>
-                                                <th className="py-3.5 px-4">المقرر الدراسي</th>
-                                                <th className="py-3.5 px-4">المحاضر</th>
-                                                <th className="py-3.5 px-4 text-center w-28">الفصل الأول</th>
-                                                <th className="py-3.5 px-4 text-center w-28">الفصل الثاني</th>
-                                                <th className="py-3.5 px-4 text-center w-28 bg-emerald-50/50 text-[#064E3B]">المعدل</th>
-                                                <th className="py-3.5 px-4 text-center w-28">التقدير</th>
+                                    <table className="w-full text-xs text-right border-collapse">
+                                        <thead>
+                                            {/* Row 1: # | المقرر | Academic Years | المعدل */}
+                                            <tr className="bg-slate-50/90 text-slate-600 font-extrabold border-b border-slate-200/80 text-[11px]">
+                                                <th
+                                                    rowSpan={2}
+                                                    className="py-2.5 px-2.5 w-10 text-center border-l border-slate-200/70 bg-slate-50"
+                                                >
+                                                    #
+                                                </th>
+                                                <th
+                                                    rowSpan={2}
+                                                    className="py-2.5 px-3.5 min-w-[140px] border-l border-slate-200/70 bg-slate-50"
+                                                >
+                                                    المقرر
+                                                </th>
+
+                                                {academicHistory.yearColumns.map(col => (
+                                                    <th
+                                                        key={col.enrollmentId}
+                                                        className={`py-2 px-2.5 text-center min-w-[100px] border-l border-slate-200/70 tabular-nums ${
+                                                            col.isRepeatedLater
+                                                                ? 'bg-red-50/60 text-red-900'
+                                                                : col.isRepeatAttempt
+                                                                ? 'bg-emerald-50/50 text-[#064E3B]'
+                                                                : 'bg-slate-50/90 text-slate-800'
+                                                        }`}
+                                                    >
+                                                        <span className="text-xs font-extrabold">{col.academicYearName}</span>
+                                                    </th>
+                                                ))}
+
+                                                <th
+                                                    rowSpan={2}
+                                                    className="py-2.5 px-3 text-center w-24 bg-emerald-50/60 text-[#064E3B]"
+                                                >
+                                                    المعدل
+                                                </th>
+                                            </tr>
+
+                                            {/* Row 2: Class Name per Academic Year */}
+                                            <tr className="bg-slate-50/50 text-slate-500 font-bold border-b border-slate-200 text-[11px]">
+                                                {academicHistory.yearColumns.map(col => (
+                                                    <th
+                                                        key={`${col.enrollmentId}_class`}
+                                                        className={`py-1.5 px-2 text-center border-l border-slate-200/70 ${
+                                                            col.isRepeatedLater
+                                                                ? 'bg-red-50/30 text-red-800'
+                                                                : col.isRepeatAttempt
+                                                                ? 'bg-emerald-50/25 text-[#064E3B]'
+                                                                : ''
+                                                        }`}
+                                                    >
+                                                        <div className="flex items-center justify-center gap-1 flex-wrap">
+                                                            <span className="font-bold text-slate-700">{col.className}</span>
+                                                            {col.isRepeatedLater && (
+                                                                <span className="text-[9px] text-red-600 bg-red-100/70 px-1 rounded font-extrabold">
+                                                                    معيد
+                                                                </span>
+                                                            )}
+                                                            {!col.isRepeatedLater && col.isRepeatAttempt && (
+                                                                <span className="text-[9px] text-emerald-700 bg-emerald-100/70 px-1 rounded font-extrabold">
+                                                                    إعادة
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    </th>
+                                                ))}
                                             </tr>
                                         </thead>
-                                        <tbody className="divide-y divide-slate-100">
-                                            {yearGrades.map((g, idx) => {
-                                                const hasAny = Boolean(g.hasSem1 || g.hasSem2);
-                                                const rowAvg =
-                                                    g.hasSem1 && g.hasSem2
-                                                        ? (g.sem1_total + g.sem2_total) / 2
-                                                        : g.hasSem1 && !g.hasSem2
-                                                        ? g.status === GradeStatus.PUBLISHED
-                                                            ? (g.sem1_total + g.sem2_total) / 2
-                                                            : g.sem1_total
-                                                        : !g.hasSem1 && g.hasSem2
-                                                        ? g.status === GradeStatus.PUBLISHED
-                                                            ? (g.sem1_total + g.sem2_total) / 2
-                                                            : g.sem2_total
-                                                        : null;
-                                                const pred = getAcademicPredicate(rowAvg);
 
-                                                return (
-                                                    <tr key={idx} className="hover:bg-emerald-50/20 transition-colors">
-                                                        <td className="py-3 px-4 text-center text-slate-400 font-mono tabular-nums text-xs">
-                                                            {idx + 1}
-                                                        </td>
-                                                        <td className="py-3 px-4">
-                                                            <span className="font-extrabold text-slate-900">{g.subjectName}</span>
-                                                            <span className="text-[11px] text-slate-400 font-mono tabular-nums mr-2">
-                                                                {g.subjectCode}
-                                                            </span>
-                                                        </td>
-                                                        <td className="py-3 px-4 text-slate-600 text-xs font-medium">
-                                                            {g.lecturerName}
-                                                        </td>
-                                                        <td className="py-3 px-4 text-center tabular-nums font-bold">
-                                                            {g.hasSem1 ? (
-                                                                <span className={g.sem1_total < 60 ? 'text-red-600 font-extrabold' : 'text-slate-800'}>
-                                                                    {formatAcademicScore(g.sem1_total, 1)}
+                                        <tbody className="divide-y divide-slate-100">
+                                            {academicHistory.subjectRows.map((row, idx) => (
+                                                <tr key={row.subjectKey} className="hover:bg-slate-50/70 transition-colors">
+                                                    <td className="py-2.5 px-2.5 text-center text-slate-400 font-mono tabular-nums text-[11px] border-l border-slate-100">
+                                                        {idx + 1}
+                                                    </td>
+
+                                                    <td className="py-2.5 px-3.5 font-extrabold text-slate-900 border-l border-slate-100">
+                                                        <span className="text-xs sm:text-sm">{row.subjectName}</span>
+                                                    </td>
+
+                                                    {academicHistory.yearColumns.map(col => {
+                                                        const cell = row.cellsByEnrollmentId[col.enrollmentId];
+                                                        if (!cell || !cell.enrolledInSubject || !cell.hasGrade || cell.finalScore === null) {
+                                                            return (
+                                                                <td
+                                                                    key={col.enrollmentId}
+                                                                    className={`py-2.5 px-2.5 text-center border-l border-slate-100 text-slate-300 ${
+                                                                        col.isRepeatedLater ? 'bg-red-50/10' : ''
+                                                                    }`}
+                                                                >
+                                                                    —
+                                                                </td>
+                                                            );
+                                                        }
+
+                                                        const isLow = cell.finalScore < 60;
+
+                                                        return (
+                                                            <td
+                                                                key={col.enrollmentId}
+                                                                className={`py-2.5 px-2.5 text-center border-l border-slate-100 tabular-nums ${
+                                                                    cell.isExcludedDueToRepeat
+                                                                        ? 'bg-red-50/20'
+                                                                        : col.isRepeatAttempt
+                                                                        ? 'bg-emerald-50/10'
+                                                                        : ''
+                                                                }`}
+                                                            >
+                                                                <span
+                                                                    className={`font-extrabold ${
+                                                                        cell.isExcludedDueToRepeat
+                                                                            ? 'text-red-400 line-through'
+                                                                            : isLow
+                                                                            ? 'text-red-600'
+                                                                            : 'text-slate-800'
+                                                                    }`}
+                                                                    title={
+                                                                        cell.isExcludedDueToRepeat
+                                                                            ? 'درجة العام السابق (لا تدخل في المعدل)'
+                                                                            : undefined
+                                                                    }
+                                                                >
+                                                                    {formatAcademicScore(cell.finalScore, 1)}
                                                                 </span>
-                                                            ) : (
-                                                                <span className="text-slate-300">—</span>
-                                                            )}
-                                                        </td>
-                                                        <td className="py-3 px-4 text-center tabular-nums font-bold">
-                                                            {g.hasSem2 ? (
-                                                                <span className={g.sem2_total < 60 ? 'text-red-600 font-extrabold' : 'text-slate-800'}>
-                                                                    {formatAcademicScore(g.sem2_total, 1)}
+
+                                                                {showSemesterBreakdown && (
+                                                                    <div className="text-[9px] text-slate-400 tabular-nums mt-0.5">
+                                                                        {formatAcademicScore(cell.sem1Score, 0)} · {formatAcademicScore(cell.sem2Score, 0)}
+                                                                    </div>
+                                                                )}
+                                                            </td>
+                                                        );
+                                                    })}
+
+                                                    <td className="py-2.5 px-3 text-center bg-emerald-50/20 tabular-nums font-extrabold">
+                                                        {row.averageScore !== null ? (
+                                                            <div className="flex items-center justify-center gap-1">
+                                                                <span className={row.averageScore < 60 ? 'text-red-600' : 'text-[#064E3B]'}>
+                                                                    {formatAcademicScore(row.averageScore, 1)}
                                                                 </span>
-                                                            ) : (
-                                                                <span className="text-slate-300">—</span>
-                                                            )}
-                                                        </td>
-                                                        <td className="py-3 px-4 text-center bg-emerald-50/25 font-extrabold tabular-nums">
-                                                            {hasAny && rowAvg !== null ? (
-                                                                <span className={rowAvg < 60 ? 'text-red-600' : 'text-[#064E3B]'}>
-                                                                    {formatAcademicScore(rowAvg, 1)}
+                                                                <span className="text-[10px] font-bold text-slate-400">
+                                                                    ({row.predicate})
                                                                 </span>
-                                                            ) : (
-                                                                <span className="text-slate-300">—</span>
-                                                            )}
-                                                        </td>
-                                                        <td className="py-3 px-4 text-center text-xs font-extrabold">
-                                                            {hasAny && rowAvg !== null ? (
-                                                                <span className={rowAvg < 60 ? 'text-red-600' : 'text-emerald-800'}>
-                                                                    {pred}
-                                                                </span>
-                                                            ) : (
-                                                                <span className="text-slate-400 font-normal">لم ترصد</span>
-                                                            )}
-                                                        </td>
-                                                    </tr>
-                                                );
-                                            })}
+                                                            </div>
+                                                        ) : (
+                                                            <span className="text-slate-300">—</span>
+                                                        )}
+                                                    </td>
+                                                </tr>
+                                            ))}
                                         </tbody>
+
                                         <tfoot>
-                                            <tr className="bg-emerald-50/70 border-t-2 border-emerald-200 font-extrabold text-slate-900">
-                                                <td colSpan={3} className="py-3.5 px-4 text-left text-xs sm:text-sm text-[#064E3B]">
-                                                    المعدل السنوي للعام الدراسي ({currentYearName})
+                                            <tr className="bg-slate-50 border-t-2 border-slate-200 font-extrabold text-slate-900 text-xs">
+                                                <td
+                                                    colSpan={2}
+                                                    className="py-3 px-3.5 text-right border-l border-slate-200/80 text-[#064E3B]"
+                                                >
+                                                    المعدل العام
                                                 </td>
-                                                <td className="py-3.5 px-4 text-center tabular-nums text-slate-700">
-                                                    {formatAcademicScore(yearKhsStats.sem1Avg, 1)}
-                                                </td>
-                                                <td className="py-3.5 px-4 text-center tabular-nums text-slate-700">
-                                                    {formatAcademicScore(yearKhsStats.sem2Avg, 1)}
-                                                </td>
-                                                <td className="py-3.5 px-4 text-center tabular-nums text-base text-[#064E3B] bg-emerald-100/70">
-                                                    {formatAcademicScore(yearKhsStats.yearlyAvg, 2)}
-                                                </td>
-                                                <td className="py-3.5 px-4 text-center text-xs text-[#064E3B]">
-                                                    {yearKhsStats.predicate}
+
+                                                {academicHistory.yearColumns.map(col => (
+                                                    <td
+                                                        key={`${col.enrollmentId}_avg`}
+                                                        className={`py-3 px-2.5 text-center border-l border-slate-200/70 tabular-nums ${
+                                                            col.isRepeatedLater
+                                                                ? 'text-red-400 line-through bg-red-50/20'
+                                                                : 'text-slate-700'
+                                                        }`}
+                                                    >
+                                                        {formatAcademicScore(col.yearAverage, 1)}
+                                                    </td>
+                                                ))}
+
+                                                <td className="py-3 px-3 text-center bg-[#064E3B] text-white tabular-nums">
+                                                    <span className="text-sm font-extrabold">
+                                                        {formatAcademicScore(academicHistory.overallAverage, 2)}
+                                                    </span>
+                                                    <span className="text-[10px] font-bold text-emerald-100 mr-1">
+                                                        ({academicHistory.overallPredicate})
+                                                    </span>
                                                 </td>
                                             </tr>
                                         </tfoot>
                                     </table>
                                 </div>
                             ) : (
-                                <div className="py-16 text-center text-slate-400 text-xs font-bold">
-                                    لا توجد مقررات مسجلة لهذا الطالب في عام {currentYearName}
+                                <div className="py-14 text-center text-slate-400 text-xs font-bold">
+                                    لا توجد سجلات تاريخية لهذا الطالب
                                 </div>
-                            )
-                        ) : (
-                            /* ============================================================= */
-                            /* TABEL DINAMIS RIWAYAT NILAI AKADEMIK MAHASISWA (FULL-WIDTH)   */
-                            /* ============================================================= */
-                            <div className="flex flex-col">
-                                {/* Info Bar jika Mahasiswa Pernah Mengulang Kelas */}
-                                {academicHistory && academicHistory.repeatCount > 0 && (
-                                    <div className="px-4 sm:px-6 py-2.5 bg-amber-50/70 border-b border-amber-200/70 text-xs text-amber-950 flex items-center gap-2">
-                                        <svg className="w-4 h-4 text-amber-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                        </svg>
-                                        <span>
-                                            <strong>ملاحظة إعادة الفصل:</strong> العام الدراسي الموسوم بـ{' '}
-                                            <strong className="text-red-700">راسب – معيد للفصل</strong> يُعرض كسجل تاريخي فقط (مشطوب) ولا يدخل في حساب المعدل، وتُعتمد درجة سنة الإعادة الأخيرة.
-                                        </span>
-                                    </div>
-                                )}
-
-                                {loadingHistory ? (
-                                    <div className="py-16 flex flex-col items-center justify-center">
-                                        <div className="w-8 h-8 border-2 border-emerald-100 border-t-[#064E3B] rounded-full animate-spin mb-2.5"></div>
-                                        <p className="text-slate-400 text-xs font-bold">جاري تحميل السجل التاريخي الشامل...</p>
-                                    </div>
-                                ) : academicHistory && academicHistory.subjectRows.length > 0 ? (
-                                    <div className="overflow-x-auto">
-                                        <table className="w-full min-w-[640px] text-xs sm:text-sm text-right border-collapse">
-                                            <thead>
-                                                {/* BARIS HEADER 1: No | Nama Mata Kuliah | Kolom Tahun Akademik Dinamis | Rata-rata */}
-                                                <tr className="bg-slate-100/80 text-slate-700 font-extrabold border-b border-slate-200 text-xs">
-                                                    <th
-                                                        rowSpan={2}
-                                                        className="py-3 px-3.5 w-12 text-center border-l border-slate-200/70 bg-slate-100"
-                                                    >
-                                                        #
-                                                    </th>
-                                                    <th
-                                                        rowSpan={2}
-                                                        className="py-3 px-4 min-w-[180px] border-l border-slate-200/70 bg-slate-100"
-                                                    >
-                                                        المقرر الدراسي
-                                                    </th>
-
-                                                    {academicHistory.yearColumns.map(col => (
-                                                        <th
-                                                            key={col.enrollmentId}
-                                                            className={`py-2.5 px-4 text-center min-w-[130px] border-l border-slate-200/70 tabular-nums ${
-                                                                col.isRepeatedLater
-                                                                    ? 'bg-red-50/70 text-red-900'
-                                                                    : col.isRepeatAttempt
-                                                                    ? 'bg-emerald-50/60 text-[#064E3B]'
-                                                                    : 'bg-slate-100/80 text-slate-800'
-                                                            }`}
-                                                        >
-                                                            <span className="text-[11px] text-slate-400 font-bold block">العام الدراسي</span>
-                                                            <span className="text-xs sm:text-sm font-extrabold">{col.academicYearName}</span>
-                                                        </th>
-                                                    ))}
-
-                                                    <th
-                                                        rowSpan={2}
-                                                        className="py-3 px-4 text-center min-w-[110px] bg-emerald-50/70 text-[#064E3B] border-r border-emerald-200/60"
-                                                    >
-                                                        المعدل
-                                                    </th>
-                                                </tr>
-
-                                                {/* BARIS HEADER 2: Keterangan Kelas & Status Mengulang di Bawah Tahun Akademik */}
-                                                <tr className="bg-slate-50/90 text-slate-600 font-bold border-b-2 border-slate-200 text-xs">
-                                                    {academicHistory.yearColumns.map(col => (
-                                                        <th
-                                                            key={`${col.enrollmentId}_class`}
-                                                            className={`py-2 px-3 text-center border-l border-slate-200/70 ${
-                                                                col.isRepeatedLater
-                                                                    ? 'bg-red-50/40 text-red-800'
-                                                                    : col.isRepeatAttempt
-                                                                    ? 'bg-emerald-50/30 text-[#064E3B]'
-                                                                    : 'bg-slate-50/90 text-slate-600'
-                                                            }`}
-                                                        >
-                                                            <div className="font-extrabold text-slate-800">{col.className}</div>
-                                                            {col.isRepeatedLater && (
-                                                                <div className="text-[10px] text-red-600 font-extrabold mt-0.5">
-                                                                    راسب – معيد للفصل
-                                                                </div>
-                                                            )}
-                                                            {!col.isRepeatedLater && col.isRepeatAttempt && (
-                                                                <div className="text-[10px] text-emerald-700 font-extrabold mt-0.5">
-                                                                    سنة الإعادة (معتمدة)
-                                                                </div>
-                                                            )}
-                                                        </th>
-                                                    ))}
-                                                </tr>
-                                            </thead>
-
-                                            <tbody className="divide-y divide-slate-100">
-                                                {academicHistory.subjectRows.map((row, idx) => (
-                                                    <tr key={row.subjectKey} className="hover:bg-emerald-50/20 transition-colors">
-                                                        <td className="py-3 px-3.5 text-center text-slate-400 font-mono tabular-nums text-xs border-l border-slate-100">
-                                                            {idx + 1}
-                                                        </td>
-
-                                                        <td className="py-3 px-4 font-extrabold text-slate-900 border-l border-slate-100">
-                                                            <span>{row.subjectName}</span>
-                                                            <span className="text-[11px] text-slate-400 font-mono tabular-nums font-normal mr-2">
-                                                                {row.subjectCode}
-                                                            </span>
-                                                        </td>
-
-                                                        {academicHistory.yearColumns.map(col => {
-                                                            const cell = row.cellsByEnrollmentId[col.enrollmentId];
-                                                            if (!cell || !cell.enrolledInSubject || !cell.hasGrade || cell.finalScore === null) {
-                                                                return (
-                                                                    <td
-                                                                        key={col.enrollmentId}
-                                                                        className={`py-3 px-4 text-center border-l border-slate-100 text-slate-300 ${
-                                                                            col.isRepeatedLater ? 'bg-red-50/15' : ''
-                                                                        }`}
-                                                                    >
-                                                                        —
-                                                                    </td>
-                                                                );
-                                                            }
-
-                                                            const isLow = cell.finalScore < 60;
-
-                                                            return (
-                                                                <td
-                                                                    key={col.enrollmentId}
-                                                                    className={`py-3 px-4 text-center border-l border-slate-100 tabular-nums ${
-                                                                        cell.isExcludedDueToRepeat
-                                                                            ? 'bg-red-50/25'
-                                                                            : col.isRepeatAttempt
-                                                                            ? 'bg-emerald-50/15'
-                                                                            : ''
-                                                                    }`}
-                                                                >
-                                                                    <span
-                                                                        className={`font-extrabold ${
-                                                                            cell.isExcludedDueToRepeat
-                                                                                ? 'text-red-500/80 line-through decoration-red-400'
-                                                                                : isLow
-                                                                                ? 'text-red-600'
-                                                                                : 'text-slate-800'
-                                                                        }`}
-                                                                        title={
-                                                                            cell.isExcludedDueToRepeat
-                                                                                ? 'درجة العام السابق (لا تدخل في حساب المعدل بسبب إعادة الفصل)'
-                                                                                : undefined
-                                                                        }
-                                                                    >
-                                                                        {formatAcademicScore(cell.finalScore, 1)}
-                                                                    </span>
-
-                                                                    {showSemesterBreakdown && (
-                                                                        <div className="text-[10px] text-slate-400 tabular-nums mt-0.5">
-                                                                            ف1: {formatAcademicScore(cell.sem1Score, 0)} · ف2:{' '}
-                                                                            {formatAcademicScore(cell.sem2Score, 0)}
-                                                                        </div>
-                                                                    )}
-                                                                </td>
-                                                            );
-                                                        })}
-
-                                                        <td className="py-3 px-4 text-center bg-emerald-50/25 border-r border-emerald-100 tabular-nums font-extrabold">
-                                                            {row.averageScore !== null ? (
-                                                                <div className="flex items-center justify-center gap-1.5">
-                                                                    <span className={row.averageScore < 60 ? 'text-red-600' : 'text-[#064E3B]'}>
-                                                                        {formatAcademicScore(row.averageScore, 1)}
-                                                                    </span>
-                                                                    <span className="text-[11px] font-bold text-slate-400">
-                                                                        ({row.predicate})
-                                                                    </span>
-                                                                </div>
-                                                            ) : (
-                                                                <span className="text-slate-300">—</span>
-                                                            )}
-                                                        </td>
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-
-                                            {/* BARIS PALING BAWAH: Rata-rata Keseluruhan Semua Mata Kuliah */}
-                                            <tfoot>
-                                                <tr className="bg-emerald-50/75 border-t-2 border-emerald-300 font-extrabold text-slate-900">
-                                                    <td
-                                                        colSpan={2}
-                                                        className="py-3.5 px-4 text-left border-l border-emerald-200/80 text-[#064E3B] text-xs sm:text-sm"
-                                                    >
-                                                        المعدل العام لجميع المقررات (Rata-rata Keseluruhan)
-                                                    </td>
-
-                                                    {academicHistory.yearColumns.map(col => (
-                                                        <td
-                                                            key={`${col.enrollmentId}_avg`}
-                                                            className={`py-3.5 px-4 text-center border-l border-emerald-200/60 tabular-nums ${
-                                                                col.isRepeatedLater
-                                                                    ? 'text-red-500/75 line-through bg-red-50/30'
-                                                                    : 'text-slate-700'
-                                                            }`}
-                                                        >
-                                                            {formatAcademicScore(col.yearAverage, 1)}
-                                                        </td>
-                                                    ))}
-
-                                                    <td className="py-3.5 px-4 text-center bg-[#064E3B] text-white tabular-nums">
-                                                        <span className="text-base font-extrabold">
-                                                            {formatAcademicScore(academicHistory.overallAverage, 2)}
-                                                        </span>
-                                                        <span className="text-[11px] font-bold text-emerald-100 mr-1.5">
-                                                            ({academicHistory.overallPredicate})
-                                                        </span>
-                                                    </td>
-                                                </tr>
-                                            </tfoot>
-                                        </table>
-                                    </div>
-                                ) : (
-                                    <div className="py-16 text-center text-slate-400 text-xs font-bold">
-                                        لا توجد سجلات تاريخية لهذا الطالب
-                                    </div>
-                                )}
-                            </div>
-                        )}
-                    </div>
-                )}
-            </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            )}
         </div>
     );
 };

@@ -23,9 +23,9 @@ interface LecturerDashboardProps {
 type TabType = 'sem1' | 'sem2' | 'recap' | 'remidi';
 
 interface ScoreInputProps {
-  value: number;
+  value: string;
   max: number;
-  onChange: (v: number) => void;
+  onChange: (v: string) => void;
   disabled: boolean;
   label: string;
   highlight?: boolean;
@@ -43,28 +43,52 @@ const ScoreInput: React.FC<ScoreInputProps> = React.memo(({
   rowIndex,
   colKey
 }) => {
-  const [localValue, setLocalValue] = useState(value.toString());
+  const [localValue, setLocalValue] = useState<string>(value);
 
   useEffect(() => {
-    setLocalValue(value.toString());
+    setLocalValue(value);
   }, [value]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const raw = e.target.value;
     if (raw === '' || /^[0-9]*$/.test(raw)) {
       setLocalValue(raw);
+      if (raw === '') {
+        onChange('');
+      } else {
+        let num = parseInt(raw, 10);
+        if (!isNaN(num)) {
+          if (num > max) num = max;
+          if (num < 0) num = 0;
+          onChange(num.toString());
+        }
+      }
     }
   };
 
   const commitValue = () => {
-    let num = parseInt(localValue, 10);
-    if (isNaN(num)) num = 0;
-    else if (num > max) num = max;
+    const trimmed = localValue.trim();
+    if (trimmed === '') {
+      setLocalValue('');
+      if (value !== '') {
+        onChange('');
+      }
+      return;
+    }
+
+    let num = parseInt(trimmed, 10);
+    if (isNaN(num)) {
+      setLocalValue('');
+      onChange('');
+      return;
+    }
+    if (num > max) num = max;
     else if (num < 0) num = 0;
 
-    setLocalValue(num.toString());
-    if (num !== value) {
-      onChange(num);
+    const normalized = num.toString();
+    setLocalValue(normalized);
+    if (normalized !== value) {
+      onChange(normalized);
     }
   };
 
@@ -115,12 +139,14 @@ const ScoreInput: React.FC<ScoreInputProps> = React.memo(({
     }
   };
 
+  const isEmpty = localValue.trim() === '';
+
   if (disabled) {
     return (
       <div className="w-full">
         <span className="text-[10px] text-slate-400 block mb-0.5 md:hidden font-bold">{label}</span>
         <div className={`w-full h-9 rounded-lg flex items-center justify-center text-xs md:text-sm font-extrabold tabular-nums border ${highlight ? 'bg-amber-50/70 border-amber-200 text-amber-800' : 'bg-slate-100 border-slate-200 text-slate-500'} cursor-not-allowed`}>
-          {value}
+          {isEmpty ? '' : localValue}
         </div>
       </div>
     );
@@ -142,8 +168,14 @@ const ScoreInput: React.FC<ScoreInputProps> = React.memo(({
         onBlur={handleBlur}
         onFocus={handleFocus}
         onKeyDown={handleKeyDown}
-        placeholder="0"
-        className={`w-full h-9 md:h-10 text-center border rounded-lg focus:ring-2 focus:ring-emerald-500/15 outline-none font-extrabold tabular-nums text-xs md:text-sm transition-all placeholder-slate-300 shadow-2xs ${highlight ? 'bg-amber-50 border-amber-300 text-amber-900 focus:border-amber-500' : 'bg-white border-slate-300 focus:border-[#064E3B] text-slate-800'}`}
+        placeholder=""
+        className={`w-full h-9 md:h-10 text-center border rounded-lg focus:ring-2 focus:ring-emerald-500/15 outline-none font-extrabold tabular-nums text-xs md:text-sm transition-all shadow-2xs ${
+          isEmpty
+            ? 'bg-amber-50/30 border-amber-300 focus:border-[#064E3B] text-slate-800'
+            : highlight
+              ? 'bg-amber-50 border-amber-300 text-amber-900 focus:border-amber-500'
+              : 'bg-white border-slate-300 focus:border-[#064E3B] text-slate-800'
+        }`}
       />
       <span className={`hidden group-focus-within:block absolute -top-2 right-2 px-1 text-[9px] font-bold border rounded z-10 tabular-nums ${highlight ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-white text-emerald-700 border-emerald-100'}`}>
         الحد: {max}
@@ -151,6 +183,23 @@ const ScoreInput: React.FC<ScoreInputProps> = React.memo(({
     </div>
   );
 });
+
+const buildInitialDraftInputs = (data: { student: User, grade: GradeRecord }[]): { [key: string]: string } => {
+  const map: { [key: string]: string } = {};
+  data.forEach(({ student, grade }) => {
+    const sem1Sub = Boolean(grade.sem1_submitted);
+    const sem2Sub = Boolean(grade.sem2_submitted);
+
+    // Jika sudah pernah diinput (sem1_submitted = true), tampilkan nilai yang diinput sebelumnya.
+    // Jika belum pernah diinput, tampilkan kotak kosong ('') bukan angka 0.
+    map[`${student.id}_sem1_uts`] = sem1Sub ? String(grade.sem1_uts ?? 0) : '';
+    map[`${student.id}_sem1_uas`] = sem1Sub ? String(grade.sem1_uas ?? 0) : '';
+
+    map[`${student.id}_sem2_uts`] = sem2Sub ? String(grade.sem2_uts ?? 0) : '';
+    map[`${student.id}_sem2_uas`] = sem2Sub ? String(grade.sem2_uas ?? 0) : '';
+  });
+  return map;
+};
 
 const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
   const [years, setYears] = useState<AcademicYear[]>([]);
@@ -160,6 +209,7 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
   const [selectedSubject, setSelectedSubject] = useState<SubjectView | null>(null);
   
   const [studentsData, setStudentsData] = useState<{ student: User, grade: GradeRecord }[]>([]);
+  const [draftInputs, setDraftInputs] = useState<{ [key: string]: string }>({});
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [reloading, setReloading] = useState(false);
@@ -178,6 +228,12 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
   const [remidiScores, setRemidiScores] = useState<{ [id: string]: string }>({});
   const [remidiSettings, setRemidiSettings] = useState<RemidiSettings>({ academicYearId: '', isInputOpen: false, isPublished: false });
   const [savingRemidi, setSavingRemidi] = useState(false);
+
+  const openEditRequestModal = () => {
+    setWhatsappClicked(false);
+    setRequestNotes('');
+    setShowEditModal(true);
+  };
 
   const loadMetadata = async () => {
     const data = await getAcademicYears();
@@ -227,6 +283,7 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
     setSelectedSubject(null);
     setActiveTab('sem1'); 
     setShowEditModal(false);
+    setWhatsappClicked(false);
   }, [user.id, selectedYear]);
 
   useEffect(() => {
@@ -234,6 +291,7 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
       setLoading(true);
       getClassStudents(selectedSubject.id).then(data => {
         setStudentsData(data);
+        setDraftInputs(buildInitialDraftInputs(data));
         setLoading(false);
       });
     }
@@ -248,7 +306,7 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
 
       const map: { [id: string]: string } = {};
       records.forEach(r => {
-        map[r.id] = r.remidiScore !== undefined ? String(r.remidiScore) : '';
+        map[r.id] = r.remidiScore !== undefined && r.remidiScore !== null ? String(r.remidiScore) : '';
       });
       setRemidiScores(map);
     }
@@ -257,7 +315,12 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
   const handleReload = async () => {
     setReloading(true);
     try {
-      await reloadSpecificData(['class_subjects', 'student_enrollments', 'grades', 'classes', 'grade_edit_requests']);
+      await reloadSpecificData(['class_subjects', 'student_enrollments', 'grades', 'classes', 'grade_edit_requests', 'academic_years']);
+      if (selectedSubject) {
+        const freshData = await getClassStudents(selectedSubject.id);
+        setStudentsData(freshData);
+        setDraftInputs(buildInitialDraftInputs(freshData));
+      }
       showSuccess('تم تحديث البيانات بنجاح');
     } catch (e) {
       showError('فشل تحديث البيانات');
@@ -312,7 +375,7 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
 
   const isSubmitted = useMemo(() => {
     if (studentsData.length === 0) return false;
-    return studentsData.some(s => {
+    return studentsData.every(s => {
       if (activeTab === 'sem1') return Boolean(s.grade.sem1_submitted);
       if (activeTab === 'sem2') return Boolean(s.grade.sem2_submitted);
       return false;
@@ -339,7 +402,7 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
 
   const isRemidiSubmitted = useMemo(() => {
     if (remidiRecords.length === 0) return false;
-    return remidiRecords.some(r => Boolean(r.submitted) || (r.remidiScore !== undefined && r.remidiScore !== null));
+    return remidiRecords.every(r => Boolean(r.submitted) || (r.remidiScore !== undefined && r.remidiScore !== null));
   }, [remidiRecords]);
 
   const latestRemidiRequest = useMemo(() => {
@@ -386,6 +449,12 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
       return;
     }
 
+    const emptyRemidiCount = remidiRecords.filter(r => (remidiScores[r.id] ?? '').trim() === '').length;
+    if (emptyRemidiCount > 0) {
+      showError(`لا يمكن الحفظ! يوجد ${emptyRemidiCount} طالب لم يتم إدخال درجة التكميلي لهم بعد.`);
+      return;
+    }
+
     const updates = remidiRecords.map(r => {
       const raw = remidiScores[r.id];
       const val = raw !== undefined && raw !== '' ? Math.max(0, Math.min(100, parseInt(raw, 10) || 0)) : 0;
@@ -422,17 +491,24 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
     }
   };
 
-  const handleGradeChange = (studentId: string, field: keyof GradeRecord, value: any) => {
+  const handleGradeChange = (studentId: string, field: 'sem1_uts' | 'sem1_uas' | 'sem2_uts' | 'sem2_uas', rawStr: string) => {
     if (isLocked) {
       showError('الدرجات مقفلة حالياً.');
       return;
     }
 
+    setDraftInputs(prev => ({
+      ...prev,
+      [`${studentId}_${field}`]: rawStr
+    }));
+
+    const numericValue = rawStr.trim() === '' ? 0 : (parseInt(rawStr, 10) || 0);
+
     setStudentsData(prev => prev.map(item => {
       if (item.student.id === studentId) {
         return {
           ...item,
-          grade: { ...item.grade, [field]: value }
+          grade: { ...item.grade, [field]: numericValue }
         };
       }
       return item;
@@ -444,6 +520,33 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
     const first = studentsData[0];
     return activeTab === 'sem1' ? (first.grade.sem1_input_type || 'COMPONENT') : (first.grade.sem2_input_type || 'COMPONENT');
   }, [studentsData, activeTab]);
+
+  // Cek apakah setiap mahasiswa sudah terisi nilainya (bukan kotak kosong) pada semester yang sedang aktif
+  const { filledStudentsCount, unfilledStudentsCount, isAllStudentsFilled } = useMemo(() => {
+    if (studentsData.length === 0 || (activeTab !== 'sem1' && activeTab !== 'sem2')) {
+      return { filledStudentsCount: 0, unfilledStudentsCount: 0, isAllStudentsFilled: false };
+    }
+    let filled = 0;
+    let unfilled = 0;
+    for (const item of studentsData) {
+      const sid = item.student.id;
+      const mode = activeTab === 'sem1' ? (item.grade.sem1_input_type || 'COMPONENT') : (item.grade.sem2_input_type || 'COMPONENT');
+      const utsStr = (draftInputs[`${sid}_${activeTab}_uts`] ?? '').trim();
+      const uasStr = (draftInputs[`${sid}_${activeTab}_uas`] ?? '').trim();
+
+      const rowFilled = mode === 'DIRECT'
+        ? uasStr !== ''
+        : (utsStr !== '' && uasStr !== '');
+
+      if (rowFilled) filled++;
+      else unfilled++;
+    }
+    return {
+      filledStudentsCount: filled,
+      unfilledStudentsCount: unfilled,
+      isAllStudentsFilled: studentsData.length > 0 && unfilled === 0
+    };
+  }, [studentsData, draftInputs, activeTab]);
 
   const handleGlobalToggle = async () => {
     if (isLocked) {
@@ -461,14 +564,45 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
     
     if (!confirmed) return;
 
+    const nextDrafts = { ...draftInputs };
+
     setStudentsData(prev => prev.map(item => {
+      const sid = item.student.id;
+      const utsKey = `${sid}_${sem}_uts`;
+      const uasKey = `${sid}_${sem}_uas`;
+      const wasUtsFilled = (nextDrafts[utsKey] ?? '').trim() !== '';
+      const wasUasFilled = (nextDrafts[uasKey] ?? '').trim() !== '';
+
       let newUts = sem === 'sem1' ? item.grade.sem1_uts : item.grade.sem2_uts;
       let newUas = sem === 'sem1' ? item.grade.sem1_uas : item.grade.sem2_uas;
 
       if (newMethod === 'DIRECT') {
-        newUas = newUts + newUas;
-        newUts = 0;
-        if (newUas > 100) newUas = 100;
+        if (!wasUtsFilled && !wasUasFilled) {
+          newUts = 0;
+          newUas = 0;
+          nextDrafts[utsKey] = '';
+          nextDrafts[uasKey] = '';
+        } else {
+          newUas = Math.min(100, newUts + newUas);
+          newUts = 0;
+          nextDrafts[utsKey] = '0';
+          nextDrafts[uasKey] = String(newUas);
+        }
+      } else {
+        if (!wasUasFilled && !wasUtsFilled) {
+          newUts = 0;
+          newUas = 0;
+          nextDrafts[utsKey] = '';
+          nextDrafts[uasKey] = '';
+        } else if (newUas > 80) {
+          newUts = Math.min(20, newUas - 80);
+          newUas = 80;
+          nextDrafts[utsKey] = String(newUts);
+          nextDrafts[uasKey] = String(newUas);
+        } else {
+          nextDrafts[utsKey] = wasUtsFilled ? String(newUts) : '';
+          nextDrafts[uasKey] = wasUasFilled ? String(newUas) : '';
+        }
       }
 
       const updates: any = {};
@@ -484,6 +618,8 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
 
       return { ...item, grade: { ...item.grade, ...updates } };
     }));
+
+    setDraftInputs(nextDrafts);
   };
 
   const handleSaveInitial = async () => {
@@ -492,9 +628,19 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
       return;
     }
 
+    if (studentsData.length === 0) {
+      showError('لا يوجد طلاب مسجلون في هذا المقرر.');
+      return;
+    }
+
+    if (!isAllStudentsFilled) {
+      showError(`لا يمكن حفظ الدرجات! يوجد ${unfilledStudentsCount} طالب لم يتم إدخال درجاتهم بعد (الخانة فارغة). يرجى تعبئة درجات جميع الطلاب أولاً.`);
+      return;
+    }
+
     const confirmed = await confirmAction(
       'حفظ واعتماد الدرجات',
-      'هل تريد حفظ درجات جميع الطلاب؟ سيتم قفل الرصد تلقائياً بعد الحفظ.',
+      'هل تريد حفظ درجات جميع الطلاب؟ سيتم قفل الرصد تلقائياً بعد الحفظ وتحويله لوضع طلب التعديل.',
       'حفظ وقفل'
     );
 
@@ -511,6 +657,7 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
 
       const freshData = await getClassStudents(selectedSubject!.id);
       setStudentsData(freshData);
+      setDraftInputs(buildInitialDraftInputs(freshData));
 
       showSuccess('تم حفظ الدرجات وقفلها بنجاح');
     } catch (e: any) {
@@ -523,6 +670,11 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
   const handleSaveEdited = async () => {
     if (!isSemActive) {
       showError('الفصل الدراسي مغلق حالياً من قبل الإدارة.');
+      return;
+    }
+
+    if (!isAllStudentsFilled) {
+      showError(`لا يمكن حفظ التعديلات! يوجد ${unfilledStudentsCount} طالب خانتهم فارغة. يرجى تعبئة جميع الخانات أولاً.`);
       return;
     }
 
@@ -545,9 +697,11 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
 
       const freshData = await getClassStudents(selectedSubject!.id);
       setStudentsData(freshData);
+      setDraftInputs(buildInitialDraftInputs(freshData));
 
       const updatedReqs = await getGradeEditRequests(selectedYear);
       setEditRequests(updatedReqs);
+      setWhatsappClicked(false);
 
       showSuccess('تم حفظ التعديلات وإعادة قفل الدرجات');
     } catch (e: any) {
@@ -576,6 +730,7 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
       showSuccess('تم إرسال طلب التعديل إلى الإدارة بنجاح');
       setShowEditModal(false);
       setRequestNotes('');
+      setWhatsappClicked(false);
     } catch (e: any) {
       showError(e.message || 'فشل إرسال الطلب');
     } finally {
@@ -695,7 +850,9 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
                     <span className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold ${subject.status === GradeStatus.DRAFT ? 'bg-slate-100 text-slate-600' : 'bg-emerald-50 text-emerald-700 border border-emerald-200/60'}`}>
                       {subject.status === GradeStatus.DRAFT ? 'قيد الرصد' : 'منشور'}
                     </span>
-                    <span className="text-[11px] font-mono text-slate-400 tabular-nums">{subject.subjectCode}</span>
+                    {subject.subjectCode && subject.subjectCode.trim() !== subject.subjectName.trim() && (
+                      <span className="text-[11px] font-mono text-slate-400 tabular-nums">{subject.subjectCode}</span>
+                    )}
                   </div>
                   <h3 className="text-sm sm:text-base font-extrabold text-slate-900 group-hover:text-[#064E3B] transition-colors">{subject.subjectName}</h3>
                 </div>
@@ -914,7 +1071,7 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
                 <div className="bg-red-50 border border-red-200 rounded-xl p-2.5 sm:p-3 text-red-900 text-xs flex items-center justify-between gap-2">
                   <span><strong>تم رفض الطلب:</strong> السجل مقفل حالياً.</span>
                   <button 
-                    onClick={() => setShowEditModal(true)}
+                    onClick={openEditRequestModal}
                     className="text-xs font-bold text-red-700 bg-red-100 hover:bg-red-200 px-3 py-1 rounded-lg transition-colors shrink-0 whitespace-nowrap"
                   >
                     طلب جديد
@@ -1029,7 +1186,7 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
                             type="text"
                             inputMode="numeric"
                             pattern="[0-9]*"
-                            placeholder="0-100"
+                            placeholder=""
                             disabled={isRemidiLocked}
                             value={scoreStr}
                             onChange={e => handleRemidiScoreChange(item.id, e.target.value)}
@@ -1038,7 +1195,7 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
                                 ? 'bg-slate-100 border-slate-200 text-slate-500 cursor-not-allowed'
                                 : isGraded
                                   ? (isPassed ? 'border-emerald-300 bg-emerald-50 text-emerald-900' : 'border-red-300 bg-red-50 text-red-900')
-                                  : 'border-slate-300 bg-white text-slate-800 focus:border-[#064E3B] focus:ring-2 focus:ring-emerald-500/20'
+                                  : 'border-amber-300 bg-amber-50/30 text-slate-800 focus:border-[#064E3B] focus:ring-2 focus:ring-emerald-500/20'
                             }`}
                           />
                           {isGraded && (
@@ -1083,16 +1240,19 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
                 </div>
 
                 {studentsData.map((item, idx) => {
+                  const utsRaw = draftInputs[`${item.student.id}_${activeTab}_uts`] ?? '';
+                  const uasRaw = draftInputs[`${item.student.id}_${activeTab}_uas`] ?? '';
                   const uts = activeTab === 'sem1' ? item.grade.sem1_uts : item.grade.sem2_uts;
                   const uas = activeTab === 'sem1' ? item.grade.sem1_uas : item.grade.sem2_uas;
                   const inputMethod = activeTab === 'sem1' ? item.grade.sem1_input_type : item.grade.sem2_input_type;
+                  const isDirect = inputMethod === 'DIRECT';
+                  const isRowFilled = isDirect ? uasRaw.trim() !== '' : (utsRaw.trim() !== '' && uasRaw.trim() !== '');
                   const total = uts + uas;
 
                   const sem1Total = item.grade.sem1_uts + item.grade.sem1_uas;
                   const sem2Total = item.grade.sem2_uts + item.grade.sem2_uas;
                   const finalAvg = (sem1Total + sem2Total) / 2;
                   const passed = finalAvg >= 60;
-                  const isDirect = inputMethod === 'DIRECT';
 
                   return (
                     <div key={item.student.id} className="bg-white p-3 md:px-4 md:py-2.5 rounded-xl border border-slate-200/80 shadow-2xs flex flex-col md:grid md:grid-cols-12 gap-2 md:gap-3 items-center">
@@ -1121,7 +1281,7 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
                             {isDirect ? (
                               <ScoreInput 
                                 label="الدرجة النهائية"
-                                value={uas}
+                                value={uasRaw}
                                 max={100}
                                 onChange={(val) => handleGradeChange(item.student.id, activeTab === 'sem1' ? 'sem1_uas' : 'sem2_uas', val)}
                                 disabled={isLocked}
@@ -1133,7 +1293,7 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
                               <div className="grid grid-cols-2 gap-2 w-full">
                                 <ScoreInput 
                                   label="النصفي (20)"
-                                  value={uts}
+                                  value={utsRaw}
                                   max={20}
                                   onChange={(val) => handleGradeChange(item.student.id, activeTab === 'sem1' ? 'sem1_uts' : 'sem2_uts', val)}
                                   disabled={isLocked}
@@ -1142,7 +1302,7 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
                                 />
                                 <ScoreInput 
                                   label="النهائي (80)"
-                                  value={uas}
+                                  value={uasRaw}
                                   max={80}
                                   onChange={(val) => handleGradeChange(item.student.id, activeTab === 'sem1' ? 'sem1_uas' : 'sem2_uas', val)}
                                   disabled={isLocked}
@@ -1154,13 +1314,15 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
 
                             <div className="md:hidden flex flex-col items-center justify-center min-w-[56px] h-9 bg-slate-50 rounded-lg px-2 border border-slate-200 shrink-0">
                               <span className="text-[8px] text-slate-400 font-bold leading-none">المجموع</span>
-                              <span className={`text-xs font-extrabold tabular-nums leading-tight mt-0.5 ${total < 60 ? 'text-red-600' : 'text-emerald-700'}`}>{total}</span>
+                              <span className={`text-xs font-extrabold tabular-nums leading-tight mt-0.5 ${!isRowFilled ? 'text-slate-300' : total < 60 ? 'text-red-600' : 'text-emerald-700'}`}>
+                                {isRowFilled ? total : '—'}
+                              </span>
                             </div>
                           </div>
 
                           <div className="hidden md:flex col-span-3 items-center justify-center gap-2">
-                            <span className={`text-sm font-extrabold tabular-nums ${total < 60 ? 'text-red-600' : 'text-emerald-700'}`}>
-                              {total}
+                            <span className={`text-sm font-extrabold tabular-nums ${!isRowFilled ? 'text-slate-300' : total < 60 ? 'text-red-600' : 'text-emerald-700'}`}>
+                              {isRowFilled ? total : '—'}
                             </span>
                             {isDirect && <span className="text-[9px] bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded border border-amber-200 font-bold">مباشر</span>}
                           </div>
@@ -1169,20 +1331,26 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
                         <div className="grid grid-cols-3 gap-2 w-full md:contents">
                           <div className="col-span-1 md:col-span-2 text-center bg-slate-50 md:bg-transparent rounded-lg p-1.5 md:p-0">
                             <span className="text-[9px] text-slate-400 block md:hidden">الأول</span>
-                            <span className="font-extrabold text-slate-700 text-xs md:text-sm tabular-nums">{sem1Total}</span>
+                            <span className="font-extrabold text-slate-700 text-xs md:text-sm tabular-nums">{item.grade.sem1_submitted ? sem1Total : '—'}</span>
                           </div>
                           <div className="col-span-1 md:col-span-2 text-center bg-slate-50 md:bg-transparent rounded-lg p-1.5 md:p-0">
                             <span className="text-[9px] text-slate-400 block md:hidden">الثاني</span>
-                            <span className="font-extrabold text-slate-700 text-xs md:text-sm tabular-nums">{sem2Total}</span>
+                            <span className="font-extrabold text-slate-700 text-xs md:text-sm tabular-nums">{item.grade.sem2_submitted ? sem2Total : '—'}</span>
                           </div>
                           <div className="col-span-1 md:col-span-2 text-center bg-emerald-50 md:bg-transparent rounded-lg p-1.5 md:p-0">
                             <span className="text-[9px] text-emerald-700 block md:hidden">المعدل</span>
-                            <span className="font-extrabold text-emerald-800 text-xs md:text-sm tabular-nums">{finalAvg.toFixed(1)}</span>
+                            <span className="font-extrabold text-emerald-800 text-xs md:text-sm tabular-nums">
+                              {(item.grade.sem1_submitted || item.grade.sem2_submitted) ? finalAvg.toFixed(1) : '—'}
+                            </span>
                           </div>
                           <div className="hidden md:block col-span-3 md:col-span-1 text-center">
-                            <span className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold ${passed ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
-                              {passed ? 'ناجح' : 'راسب'}
-                            </span>
+                            {(item.grade.sem1_submitted || item.grade.sem2_submitted) ? (
+                              <span className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold ${passed ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
+                                {passed ? 'ناجح' : 'راسب'}
+                              </span>
+                            ) : (
+                              <span className="text-slate-300 font-bold text-xs">—</span>
+                            )}
                           </div>
                         </div>
                       )}
@@ -1232,7 +1400,7 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
                     </button>
                   ) : (
                     <button
-                      onClick={() => setShowEditModal(true)}
+                      onClick={openEditRequestModal}
                       className="w-full sm:w-auto bg-amber-600 hover:bg-amber-700 text-white font-extrabold py-2.5 px-6 rounded-xl shadow-sm transition-all flex items-center justify-center gap-2 text-xs whitespace-nowrap"
                     >
                       <span>طلب تعديل</span>
@@ -1244,15 +1412,26 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
           ) : activeTab !== 'recap' && (
             <div className="sticky bottom-0 left-0 right-0 p-3 sm:p-3.5 bg-white/95 backdrop-blur-md border-t border-slate-200 z-30">
               <div className="max-w-4xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2.5">
-                <div className="text-xs text-slate-500 hidden sm:block">
+                <div className="text-xs text-slate-500 flex items-center gap-2">
                   {!isSemActive ? (
                     <span className="text-amber-700 font-bold">الفصل مغلق من قبل الإدارة.</span>
                   ) : !isSubmitted ? (
-                    <span className="text-emerald-800 font-bold">أدخل درجات جميع الطلاب ثم اضغط حفظ.</span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`px-2 py-0.5 rounded-md font-extrabold text-[11px] tabular-nums border ${
+                        isAllStudentsFilled
+                          ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                          : 'bg-amber-50 text-amber-800 border-amber-200'
+                      }`}>
+                        تم تعبئة {filledStudentsCount} من {studentsData.length} طالب
+                      </span>
+                      <span className="hidden sm:inline text-slate-600 font-bold">
+                        {isAllStudentsFilled ? 'جميع الخانات مكتملة، جاهز للحفظ.' : 'يجب تعبئة جميع الخانات الفارغة أولاً قبل الحفظ.'}
+                      </span>
+                    </div>
                   ) : hasEditPermission ? (
-                    <span className="text-emerald-700 font-bold">التعديل متاح، اضغط حفظ التعديل عند الانتهاء.</span>
+                    <span className="text-emerald-700 font-bold">التعديل متاح، اضغط حفظ التعديل عند الانتهاء لإعادة قفل السجل.</span>
                   ) : (
-                    <span className="text-slate-600">السجل مقفل، يمكنك تقديم طلب تعديل للإدارة.</span>
+                    <span className="text-slate-600">السجل مقفل، يمكنك تقديم طلب تعديل للإدارة عبر واتساب.</span>
                   )}
                 </div>
 
@@ -1264,23 +1443,34 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
                   ) : !isSubmitted ? (
                     <button 
                       onClick={handleSaveInitial}
-                      disabled={saving}
-                      className="w-full sm:w-auto bg-[#064E3B] hover:bg-emerald-800 text-white font-extrabold py-2.5 px-6 rounded-xl shadow-sm transition-all flex items-center justify-center gap-2 text-xs whitespace-nowrap"
+                      disabled={saving || !isAllStudentsFilled}
+                      title={!isAllStudentsFilled ? `يرجى إدخال درجات جميع الطلاب أولاً (متبقي ${unfilledStudentsCount} طالب)` : 'حفظ الدرجات'}
+                      className={`w-full sm:w-auto font-extrabold py-2.5 px-6 rounded-xl shadow-sm transition-all flex items-center justify-center gap-2 text-xs whitespace-nowrap ${
+                        isAllStudentsFilled
+                          ? 'bg-[#064E3B] hover:bg-emerald-800 text-white cursor-pointer'
+                          : 'bg-slate-200 text-slate-500 cursor-not-allowed'
+                      }`}
                     >
-                      {saving ? <span>جاري الحفظ...</span> : <span>حفظ</span>}
+                      {saving ? (
+                        <span>جاري الحفظ...</span>
+                      ) : !isAllStudentsFilled ? (
+                        <span>حفظ (متبقي {unfilledStudentsCount} خانة فارغة)</span>
+                      ) : (
+                        <span>حفظ</span>
+                      )}
                     </button>
                   ) : hasEditPermission ? (
                     <button 
                       onClick={handleSaveEdited}
-                      disabled={saving}
-                      className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-2.5 px-6 rounded-xl shadow-sm transition-all flex items-center justify-center gap-2 text-xs whitespace-nowrap"
+                      disabled={saving || !isAllStudentsFilled}
+                      className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-2.5 px-6 rounded-xl shadow-sm transition-all flex items-center justify-center gap-2 text-xs whitespace-nowrap disabled:opacity-50"
                     >
                       {saving ? <span>جاري الحفظ...</span> : <span>حفظ التعديل</span>}
                     </button>
                   ) : (
                     <button 
-                      onClick={() => setShowEditModal(true)}
-                      className="w-full sm:w-auto bg-amber-600 hover:bg-amber-700 text-white font-extrabold py-2.5 px-6 rounded-xl shadow-sm transition-all flex items-center justify-center gap-2 text-xs whitespace-nowrap"
+                      onClick={openEditRequestModal}
+                      className="w-full sm:w-auto bg-amber-600 hover:bg-amber-700 text-white font-extrabold py-2.5 px-6 rounded-xl shadow-sm transition-all flex items-center justify-center gap-2 text-xs whitespace-nowrap cursor-pointer"
                     >
                       <span>طلب تعديل</span>
                     </button>
@@ -1339,31 +1529,25 @@ const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ user }) => {
                     href={whatsappUrl} 
                     target="_blank" 
                     rel="noopener noreferrer"
-                    onClick={() => setWhatsappClicked(true)}
+                    onClick={() => {
+                      setWhatsappClicked(true);
+                      if ((!activeRequest || activeRequest.status === 'REJECTED' || activeRequest.status === 'COMPLETED') && !submittingRequest) {
+                        handleSubmitRequest();
+                      }
+                    }}
                     className="w-full bg-[#25D366] hover:bg-[#20ba59] text-white font-extrabold py-2.5 px-4 rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 text-xs"
                   >
-                    <span>إشعار الإدارة عبر واتساب</span>
+                    <span>إشعار الإدارة عبر واتساب وإرسال الطلب</span>
                   </a>
                 </div>
 
-                <div className="mt-5 pt-3.5 border-t border-slate-100 flex items-center justify-between gap-2">
+                <div className="mt-5 pt-3.5 border-t border-slate-100 flex items-center justify-end">
                   <button 
                     onClick={() => setShowEditModal(false)}
                     className="px-4 py-2 rounded-xl text-xs font-bold text-slate-500 hover:bg-slate-100 transition-colors"
                   >
                     إغلاق
                   </button>
-
-                  {(!activeRequest || activeRequest.status === 'REJECTED' || activeRequest.status === 'COMPLETED') && (
-                    <button 
-                      onClick={handleSubmitRequest}
-                      disabled={submittingRequest || !whatsappClicked}
-                      title={!whatsappClicked ? 'يرجى مراسلة الإدارة عبر واتساب أولاً' : ''}
-                      className="bg-[#064E3B] hover:bg-emerald-800 text-white px-5 py-2 rounded-xl font-extrabold text-xs shadow-xs transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                    >
-                      {submittingRequest ? 'جاري الإرسال...' : 'إرسال الطلب'}
-                    </button>
-                  )}
                 </div>
               </div>
             </div>

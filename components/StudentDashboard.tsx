@@ -47,7 +47,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({ user }) => {
   const handleReload = async () => {
     setReloading(true);
     try {
-      await reloadSpecificData(['grades', 'class_subjects', 'student_enrollments']);
+      await reloadSpecificData(['grades', 'class_subjects', 'student_enrollments', 'remidi_settings', 'remidi_records', 'academic_years', 'classes', 'master_subjects']);
       if (user.id && selectedYear) {
         const data = await getStudentGrades(user.id, selectedYear);
         setGrades(data);
@@ -66,7 +66,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({ user }) => {
 
   const stats = useMemo(() => {
     const total = grades.length;
-    const published = grades.filter(g => g.status === GradeStatus.PUBLISHED);
+    const published = grades.filter(g => g.status === GradeStatus.PUBLISHED && (g.hasSem1 || g.hasSem2));
     const publishedCount = published.length;
     const avg = publishedCount > 0
       ? published.reduce((acc, g) => acc + (g.final_average || 0), 0) / publishedCount
@@ -111,8 +111,8 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({ user }) => {
     }
   };
 
-  const ScoreBadge = ({ val, status }: { val: number; status: GradeStatus }) => {
-    if (status !== GradeStatus.PUBLISHED) {
+  const ScoreBadge = ({ val, status, hasScore = true }: { val: number; status: GradeStatus; hasScore?: boolean }) => {
+    if (status !== GradeStatus.PUBLISHED || !hasScore) {
       return <span className="text-slate-300 text-xs font-bold tabular-nums">—</span>;
     }
     const isLow = val < 60;
@@ -434,7 +434,9 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({ user }) => {
                       <tr key={idx} className="hover:bg-slate-50/60 transition-colors">
                         <td className="py-3 px-4">
                           <div className="font-bold text-slate-900">{item.subjectName}</div>
-                          <div className="text-[10px] text-slate-400 font-mono tabular-nums mt-0.5">{item.subjectCode}</div>
+                          {item.subjectCode && item.subjectCode.trim() !== item.subjectName.trim() && (
+                            <div className="text-[10px] text-slate-400 font-mono tabular-nums mt-0.5">{item.subjectCode}</div>
+                          )}
                         </td>
                         <td className="py-3 px-4 font-bold text-slate-700">{item.className}</td>
                         <td className="py-3 px-4 text-center">
@@ -489,7 +491,9 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({ user }) => {
                     <div className="flex justify-between items-start gap-2">
                       <div className="min-w-0">
                         <h4 className="font-bold text-slate-900 text-xs sm:text-sm truncate">{item.subjectName}</h4>
-                        <p className="text-[10px] text-slate-400 font-mono tabular-nums mt-0.5 truncate">{item.subjectCode} • {item.className}</p>
+                        <p className="text-[10px] text-slate-400 font-mono tabular-nums mt-0.5 truncate">
+                          {item.subjectCode && item.subjectCode.trim() !== item.subjectName.trim() ? `${item.subjectCode} • ` : ''}{item.className}
+                        </p>
                       </div>
                       <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md font-bold text-[10px] shrink-0">
                         {item.semester === 1 ? 'الفصل الأول' : 'الفصل الثاني'}
@@ -557,17 +561,19 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({ user }) => {
                     <tr key={idx} className="hover:bg-slate-50/60 transition-colors">
                       <td className="py-3 px-4">
                         <div className="font-bold text-slate-900">{item.subjectName}</div>
-                        <div className="text-[10px] text-slate-400 font-mono tabular-nums mt-0.5">{item.subjectCode}</div>
+                        {item.subjectCode && item.subjectCode.trim() !== item.subjectName.trim() && (
+                          <div className="text-[10px] text-slate-400 font-mono tabular-nums mt-0.5">{item.subjectCode}</div>
+                        )}
                       </td>
                       <td className="py-3 px-4 text-slate-600">{item.lecturerName}</td>
                       <td className="py-3 px-4 text-center">
-                        <ScoreBadge val={item.sem1_total} status={item.status} />
+                        <ScoreBadge val={item.sem1_total} status={item.status} hasScore={item.hasSem1} />
                       </td>
                       <td className="py-3 px-4 text-center">
-                        <ScoreBadge val={item.sem2_total} status={item.status} />
+                        <ScoreBadge val={item.sem2_total} status={item.status} hasScore={item.hasSem2} />
                       </td>
                       <td className="py-3 px-4 text-center bg-slate-50/40">
-                        {item.status === GradeStatus.PUBLISHED ? (
+                        {item.status === GradeStatus.PUBLISHED && (item.hasSem1 || item.hasSem2) ? (
                           <span className={`inline-flex items-center justify-center min-w-[2.5rem] px-2.5 py-0.5 rounded-lg text-xs font-extrabold tabular-nums border ${
                             item.final_average < 60
                               ? 'bg-red-50 text-red-700 border-red-200/80'
@@ -591,9 +597,11 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({ user }) => {
                   <div className="flex justify-between items-start gap-2">
                     <div className="min-w-0">
                       <h4 className="font-bold text-slate-900 text-xs sm:text-sm truncate">{item.subjectName}</h4>
-                      <p className="text-[10px] text-slate-400 font-mono tabular-nums mt-0.5 truncate">{item.subjectCode} • {item.lecturerName}</p>
+                      <p className="text-[10px] text-slate-400 font-mono tabular-nums mt-0.5 truncate">
+                        {item.subjectCode && item.subjectCode.trim() !== item.subjectName.trim() ? `${item.subjectCode} • ` : ''}{item.lecturerName}
+                      </p>
                     </div>
-                    {item.status === GradeStatus.PUBLISHED ? (
+                    {item.status === GradeStatus.PUBLISHED && (item.hasSem1 || item.hasSem2) ? (
                       <span className={`px-2.5 py-0.5 rounded-lg text-xs font-extrabold tabular-nums border shrink-0 ${
                         item.final_average < 60
                           ? 'bg-red-50 text-red-700 border-red-200'
@@ -609,11 +617,11 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({ user }) => {
                   <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100">
                     <div className="bg-slate-50/80 rounded-lg px-2.5 py-1.5 flex items-center justify-between">
                       <span className="text-[10px] font-bold text-slate-500">الفصل الأول</span>
-                      <ScoreBadge val={item.sem1_total} status={item.status} />
+                      <ScoreBadge val={item.sem1_total} status={item.status} hasScore={item.hasSem1} />
                     </div>
                     <div className="bg-slate-50/80 rounded-lg px-2.5 py-1.5 flex items-center justify-between">
                       <span className="text-[10px] font-bold text-slate-500">الفصل الثاني</span>
-                      <ScoreBadge val={item.sem2_total} status={item.status} />
+                      <ScoreBadge val={item.sem2_total} status={item.status} hasScore={item.hasSem2} />
                     </div>
                   </div>
                 </div>

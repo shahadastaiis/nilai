@@ -898,13 +898,14 @@ export const saveSubjectSemesterGrades = async (
   // 1. Post langsung ke backend Google Apps Script dan tunggu hingga sukses tersimpan di Google Sheets
   await postData('SAVE_GRADES', mergedRecords);
 
-  // 2. Jika ada permohonan edit aktif yang APPROVED untuk semester ini, update ke COMPLETED
-  const activeReq = GRADE_EDIT_REQUESTS.find(r => 
+  // 2. Jika ada permohonan edit aktif yang APPROVED untuk semester ini, update semuanya ke COMPLETED
+  const activeReqs = GRADE_EDIT_REQUESTS.filter(r => 
     r.classSubjectId === classSubjectId && 
+    !r.isRemidi &&
     r.semester === semester && 
     r.status === 'APPROVED'
   );
-  if (activeReq) {
+  for (const activeReq of activeReqs) {
     try {
       await respondGradeEditRequest(activeReq.id, 'COMPLETED' as any);
     } catch (e) {
@@ -997,6 +998,7 @@ export const bulkCreateUsers = async (newUsers: User[]): Promise<void> => {
 export const updateUser = async (user: User): Promise<void> => {
   const index = USERS.findIndex(u => u.id === user.id);
   if (index !== -1) {
+    const prevPassword = USERS[index].password;
     USERS[index] = {
       ...USERS[index],
       ...user,
@@ -1004,6 +1006,9 @@ export const updateUser = async (user: User): Promise<void> => {
     };
     notifyListeners();
     await postData('UPDATE_USER', USERS[index]);
+    if (user.password && user.password !== prevPassword) {
+      await postData('CHANGE_PASSWORD', { id: user.id, password: user.password });
+    }
   }
 };
 
@@ -1151,6 +1156,141 @@ export const removeStudentFromClass = async (studentId: string, classId: string)
   }
 };
 
+export interface UninputtedSubjectItem {
+  classSubjectId: string;
+  subjectName: string;
+  subjectCode: string;
+  lecturerId: string;
+  lecturerName: string;
+  gradedCount: number;
+  totalStudents: number;
+}
+
+export interface UninputtedClassColumn {
+  classObj: Class;
+  studentCount: number;
+  totalSubjectsInClass: number;
+  inputtedSubjectsInClass: number;
+  missingSubjects: UninputtedSubjectItem[];
+}
+
+export interface SemesterCompletenessReport {
+  semester: 1 | 2;
+  totalSubjectsCount: number;
+  inputtedSubjectsCount: number;
+  missingSubjectsCount: number;
+  emptyClassesCount: number;
+  isComplete: boolean;
+  allClassesColumns: UninputtedClassColumn[];
+  uninputtedByClass: UninputtedClassColumn[];
+}
+
+/**
+ * Mengecek kelengkapan penginputan nilai seluruh mata kuliah pada suatu Tahun Akademik & Semester,
+ * diklasifikasikan berdasarkan Kelas (untuk tiap kolom peringatan Admin sebelum menutup akses).
+ */
+export const getSemesterUninputtedSubjectsByClass = (
+  yearId: string,
+  semester: 1 | 2,
+  isFemaleAdmin?: boolean
+): SemesterCompletenessReport => {
+  const classesInYear = CLASSES.filter(c => {
+    if (c.academicYearId !== yearId) return false;
+    if (isFemaleAdmin && normalizeGender(c.gender) !== 'FEMALE') return false;
+    return true;
+  });
+
+  const userMap = new Map(USERS.map(u => [u.id, u]));
+  const masterMap = new Map(MASTER_SUBJECTS.map(m => [m.id, m]));
+
+  let totalSubjectsCount = 0;
+  let inputtedSubjectsCount = 0;
+  let missingSubjectsCount = 0;
+  let emptyClassesCount = 0;
+
+  const allClassesColumns: UninputtedClassColumn[] = [];
+  const uninputtedByClass: UninputtedClassColumn[] = [];
+
+  for (const cls of classesInYear) {
+    const classEnrollments = ENROLLMENTS.filter(e => {
+      if (e.classId !== cls.id) return false;
+      const student = userMap.get(e.studentId);
+      return Boolean(student && student.role === Role.STUDENT && (!student.status || student.status === UserStatus.ACTIVE));
+    });
+
+    const assignedSubjects = CLASS_SUBJECTS.filter(cs => cs.classId === cls.id);
+
+    if (classEnrollments.length === 0) {
+      if (assignedSubjects.length > 0) {
+        emptyClassesCount++;
+      }
+      continue;
+    }
+
+    const missingSubjects: UninputtedSubjectItem[] = [];
+    let inputtedInClass = 0;
+
+    for (const cs of assignedSubjects) {
+      totalSubjectsCount++;
+      const master = masterMap.get(cs.masterSubjectId);
+      const lecturer = userMap.get(cs.lecturerId);
+
+      let gradedCount = 0;
+      for (const enr of classEnrollments) {
+        const g = GRADES.find(gr => gr.enrollmentId === enr.id && gr.classSubjectId === cs.id);
+        if (g) {
+          const isSub = semester === 1
+            ? (Boolean(g.sem1_submitted) || (Number(g.sem1_uts || 0) + Number(g.sem1_uas || 0) > 0))
+            : (Boolean(g.sem2_submitted) || (Number(g.sem2_uts || 0) + Number(g.sem2_uas || 0) > 0));
+          if (isSub) {
+            gradedCount++;
+          }
+        }
+      }
+
+      if (gradedCount >= classEnrollments.length) {
+        inputtedSubjectsCount++;
+        inputtedInClass++;
+      } else {
+        missingSubjectsCount++;
+        missingSubjects.push({
+          classSubjectId: cs.id,
+          subjectName: master ? master.name : cs.masterSubjectId,
+          subjectCode: master ? master.id : cs.masterSubjectId,
+          lecturerId: cs.lecturerId,
+          lecturerName: lecturer ? lecturer.name : cs.lecturerId,
+          gradedCount,
+          totalStudents: classEnrollments.length
+        });
+      }
+    }
+
+    const colData: UninputtedClassColumn = {
+      classObj: cls,
+      studentCount: classEnrollments.length,
+      totalSubjectsInClass: assignedSubjects.length,
+      inputtedSubjectsInClass: inputtedInClass,
+      missingSubjects
+    };
+
+    allClassesColumns.push(colData);
+    if (missingSubjects.length > 0) {
+      uninputtedByClass.push(colData);
+    }
+  }
+
+  return {
+    semester,
+    totalSubjectsCount,
+    inputtedSubjectsCount,
+    missingSubjectsCount,
+    emptyClassesCount,
+    isComplete: totalSubjectsCount > 0 && missingSubjectsCount === 0,
+    allClassesColumns,
+    uninputtedByClass
+  };
+};
+
 export const toggleSemesterStatus = async (yearId: string, sem: 1|2, val: boolean) => {
   const y = ACADEMIC_YEARS.find(x => x.id === yearId);
   if (y) {
@@ -1158,7 +1298,27 @@ export const toggleSemesterStatus = async (yearId: string, sem: 1|2, val: boolea
     else y.isSem2Active = val;
     notifyListeners();
     await postData('UPDATE_YEAR_STATUS', { id: yearId, sem, val });
-    await reloadSpecificData(['academic_years']);
+
+    // Jika Admin menutup akses penginputan nilai (val === false),
+    // pastikan seluruh izin edit (APPROVED) pada semester tersebut ditutup kembali menjadi COMPLETED
+    // agar ketika suatu saat dibuka kembali oleh Admin, dosen wajib mengajukan izin edit ulang via WA.
+    if (!val) {
+      const openApprovedReqs = GRADE_EDIT_REQUESTS.filter(r =>
+        r.academicYearId === yearId &&
+        !r.isRemidi &&
+        r.semester === sem &&
+        r.status === 'APPROVED'
+      );
+      for (const req of openApprovedReqs) {
+        try {
+          await respondGradeEditRequest(req.id, 'COMPLETED' as any);
+        } catch (e) {
+          console.warn("Could not close approved edit request on semester lock:", e);
+        }
+      }
+    }
+
+    await reloadSpecificData(['academic_years', 'grade_edit_requests']);
   }
 };
 
@@ -1211,8 +1371,15 @@ export const getClassStudents = async (classSubjectId: string): Promise<{ studen
         sem2_submitted: false,
       };
     } else {
-      if (!grade.sem1_input_type) grade.sem1_input_type = 'COMPONENT';
-      if (!grade.sem2_input_type) grade.sem2_input_type = 'COMPONENT';
+      const hasLegacySem1 = Boolean(grade.sem1_submitted) || (Number(grade.sem1_uts || 0) + Number(grade.sem1_uas || 0) > 0);
+      const hasLegacySem2 = Boolean(grade.sem2_submitted) || (Number(grade.sem2_uts || 0) + Number(grade.sem2_uas || 0) > 0);
+      grade = {
+        ...grade,
+        sem1_input_type: grade.sem1_input_type || 'COMPONENT',
+        sem2_input_type: grade.sem2_input_type || 'COMPONENT',
+        sem1_submitted: hasLegacySem1,
+        sem2_submitted: hasLegacySem2,
+      };
     }
     return { student, grade: { ...grade } };
   }).filter(x => x !== null) as { student: User, grade: GradeRecord }[];
@@ -1264,7 +1431,7 @@ export const getStudentGrades = async (studentId: string, yearId: string, classI
         lecturerName: lecturer ? lecturer.name : 'Unknown',
         sem1_total: s1,
         sem2_total: s2,
-        final_average: (s1 + s2) / 2,
+        final_average: (hasSem1 && hasSem2) ? (s1 + s2) / 2 : (hasSem1 ? s1 : (hasSem2 ? s2 : 0)),
         hasSem1,
         hasSem2,
         hasGrade,
@@ -1611,11 +1778,9 @@ export const getStudentAcademicHistory = async (studentId: string): Promise<Stud
         if (hasSem1 && hasSem2) {
           finalScore = (s1 + s2) / 2;
         } else if (hasSem1 && !hasSem2) {
-          // Jika mata kuliah sudah dipublish penuh tahun tetapi sem2 = 0, rata-rata tahunan (s1+s2)/2
-          // Namun jika masih berjalan dan sem2 belum diinput sama sekali, gunakan nilai yang sudah ada
-          finalScore = matchingCs.status === GradeStatus.PUBLISHED ? (s1 + s2) / 2 : s1;
+          finalScore = s1;
         } else if (!hasSem1 && hasSem2) {
-          finalScore = matchingCs.status === GradeStatus.PUBLISHED ? (s1 + s2) / 2 : s2;
+          finalScore = s2;
         }
       }
 
@@ -1910,6 +2075,20 @@ export const toggleRemidiInputStatus = async (yearId: string, isOpen: boolean): 
   notifyListeners();
   try {
     await postData('SAVE_REMIDI_SETTINGS', s);
+    if (!isOpen) {
+      const openRemidiReqs = GRADE_EDIT_REQUESTS.filter(r =>
+        r.academicYearId === yearId &&
+        Boolean(r.isRemidi) &&
+        r.status === 'APPROVED'
+      );
+      for (const req of openRemidiReqs) {
+        try {
+          await respondGradeEditRequest(req.id, 'COMPLETED' as any);
+        } catch (e) {
+          console.warn("Could not close approved remidi edit request on lock:", e);
+        }
+      }
+    }
   } catch (err) {
     console.warn("Could not save remidi settings to backend:", err);
   }
